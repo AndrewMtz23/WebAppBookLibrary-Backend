@@ -1,0 +1,1 @@
+nRXC:\Users\pandr\source\repos\WebAppBookLibrary\WebAppBookLibrary\WebAppBookLibrary.csproj¢net8.0òCSharp12

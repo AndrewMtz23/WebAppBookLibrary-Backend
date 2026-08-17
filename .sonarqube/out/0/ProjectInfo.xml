@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ProjectInfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://www.sonarsource.com/msbuild/integration/2015/1">
+  <ProjectName>WebAppBookLibrary</ProjectName>
+  <ProjectLanguage>C#</ProjectLanguage>
+  <ProjectType>Product</ProjectType>
+  <ProjectGuid>3e29fa70-3e5e-4c96-a7e3-36ccc43e0a2b</ProjectGuid>
+  <FullPath>C:\Users\pandr\source\repos\WebAppBookLibrary\WebAppBookLibrary\WebAppBookLibrary.csproj</FullPath>
+  <IsExcluded>false</IsExcluded>
+  <AnalysisResults>
+    <AnalysisResult Id="FilesToAnalyze" Location="C:\Users\pandr\source\repos\WebAppBookLibrary\.sonarqube\conf\0\FilesToAnalyze.txt" />
+  </AnalysisResults>
+  <AnalysisSettings>
+    <Property Name="sonar.cs.roslyn.reportFilePaths">C:\Users\pandr\source\repos\WebAppBookLibrary\.sonarqube\out\0\Issues.json</Property>
+    <Property Name="sonar.cs.analyzer.projectOutPaths">C:\Users\pandr\source\repos\WebAppBookLibrary\.sonarqube\out\0</Property>
+    <Property Name="sonar.cs.scanner.telemetry">C:\Users\pandr\source\repos\WebAppBookLibrary\.sonarqube\out\0\Telemetry.json</Property>
+  </AnalysisSettings>
+  <Configuration>Debug</Configuration>
+  <Platform>AnyCPU</Platform>
+  <TargetFramework>net8.0</TargetFramework>
+</ProjectInfo>

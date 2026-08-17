@@ -1,0 +1,72 @@
+# Environment variables
+.env
+.env.example
+.env.local
+.env.*.local
+
+# Build results
+bin/
+obj/
+*.dll
+*.exe
+*.so
+*.dylib
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Visual Studio cache/options
+.vs/
+.vscode/
+*.sln.rej
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+
+# Debug
+.debug/
+*.pdb
+
+# TestResults
+TestResults/
+.trx
+
+# ReSharper
+.idea/
+*.DotSettings.user
+
+# Visual Studio Code
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Local History
+.history/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project specific
+appsettings.Development.json
+launchSettings.json
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
