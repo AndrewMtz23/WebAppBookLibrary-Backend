@@ -284,5 +284,5 @@ For questions or support, contact the project maintainer.
 
 ## Version History
 
-- v1.0.0 - Initial release
+- v1.0.0 - Initial release, create in 2025
 
