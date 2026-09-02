@@ -67,7 +67,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync(ERROR, $"Error creating loan for book {bookId} by {username}: {ex.Message}", ex);
+                await _logService.LogAsync(ERROR, $"Error creating loan for book {bookId} by {username}.", ex);
                 return (false, "Unexpected error occurred while creating loan", null);
             }
         }
@@ -109,7 +109,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync("ERROR", $"Error fetching loans for user {username}: {ex.Message}", ex);
+                await _logService.LogAsync("ERROR", $"Error fetching loans for user {username}.", ex);
                 return new List<object>();
             }
         }
@@ -123,7 +123,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync(ERROR, $"Error fetching all loans: {ex.Message}", ex);
+                await _logService.LogAsync(ERROR, "Error fetching all loans.", ex);
                 return new List<Loan>();
             }
         }
@@ -168,7 +168,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync(ERROR, $"Error fetching all loans with details: {ex.Message}", ex);
+                await _logService.LogAsync(ERROR, "Error fetching all loans with details.", ex);
                 return new List<object>();
             }
         }
@@ -226,7 +226,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync(ERROR, $"Error returning loan {loanId}: {ex.Message}", ex);
+                await _logService.LogAsync(ERROR, $"Error returning loan {loanId}.", ex);
                 return (false, "Error returning loan.");
             }
         }
@@ -252,7 +252,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync(ERROR, $"Error deleting loan {loanId}: {ex.Message}", ex);
+                await _logService.LogAsync(ERROR, $"Error deleting loan {loanId}.", ex);
                 return (false, "Error deleting loan.");
             }
         }

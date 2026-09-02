@@ -10,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using WebAppBookLibrary.Configuration;
 using WebAppBookLibrary.Data;
+using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
 
@@ -68,7 +69,13 @@ public static class Program
 
     private static void ConfigurePipeline(WebApplication app)
     {
-        app.UseExceptionHandler();
+        app.UseExceptionHandler(exceptionApp =>
+            exceptionApp.Run(context =>
+                ApiProblemFactory.WriteAsync(
+                    context,
+                    StatusCodes.Status500InternalServerError,
+                    "Internal server error",
+                    context.RequestAborted)));
 
         if (app.Environment.IsDevelopment())
         {
@@ -160,6 +167,23 @@ public static class Program
             RoleClaimType = ClaimTypes.Role,
             NameClaimType = ClaimTypes.Name
         };
+        options.Events = new JwtBearerEvents
+        {
+            OnChallenge = context =>
+            {
+                context.HandleResponse();
+                return ApiProblemFactory.WriteAsync(
+                    context.HttpContext,
+                    StatusCodes.Status401Unauthorized,
+                    "Unauthorized",
+                    context.HttpContext.RequestAborted);
+            },
+            OnForbidden = context => ApiProblemFactory.WriteAsync(
+                context.HttpContext,
+                StatusCodes.Status403Forbidden,
+                "Forbidden",
+                context.HttpContext.RequestAborted)
+        };
     }
 
     private static void ConfigureServices(IServiceCollection services)
@@ -186,6 +210,12 @@ public static class Program
         services.AddRateLimiter(options =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+            options.OnRejected = (context, cancellationToken) =>
+                new ValueTask(ApiProblemFactory.WriteAsync(
+                    context.HttpContext,
+                    StatusCodes.Status429TooManyRequests,
+                    "Too many requests",
+                    cancellationToken));
             options.AddPolicy(AuthRateLimitPolicyName, httpContext =>
                 RateLimitPartition.GetFixedWindowLimiter(
                     httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",

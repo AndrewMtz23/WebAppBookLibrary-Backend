@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
 using WebAppBookLibrary.Contracts.Books;
+using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Models;
 using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
@@ -32,9 +33,12 @@ public class BooksController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(string id)
     {
+        if (!ObjectId.TryParse(id, out _))
+            return ApiProblemFactory.Result(400, "Invalid book identifier");
+
         var book = await _bookService.GetByIdAsync(id);
         if (book is null)
-            return NotFound(new { error = "Book not found." });
+            return ApiProblemFactory.Result(404, "Book not found");
 
         return Ok(new { message = "Book retrieved", data = book });
     }
@@ -50,7 +54,7 @@ public class BooksController : ControllerBase
         if (!result.Success)
         {
             await _logService.LogAsync("WARNING", $"Error al registrar libro: {result.Message}");
-            return BadRequest(new { error = result.Message });
+            return ApiProblemFactory.Result(400, "Book could not be created");
         }
 
         await _logService.LogAsync("INFORMATION", $"Libro registrado exitosamente: {result.Book!.Title}");
@@ -66,14 +70,17 @@ public class BooksController : ControllerBase
     [Authorize(Policy = PolicyNames.ManageBooks)]
     public async Task<IActionResult> Update(string id, [FromBody] UpsertBookRequest request)
     {
+        if (!ObjectId.TryParse(id, out _))
+            return ApiProblemFactory.Result(400, "Invalid book identifier");
+
         var existingBook = await _bookService.GetByIdAsync(id);
         if (existingBook is null)
-            return NotFound(new { error = "Book not found." });
+            return ApiProblemFactory.Result(404, "Book not found");
 
         var updatedBook = MapBook(request, id, existingBook.IsAvailable);
         var result = await _bookService.UpdateAsync(updatedBook);
         if (!result.Success)
-            return NotFound(new { error = result.Message });
+            return ApiProblemFactory.Result(404, "Book not found");
 
         return Ok(new { message = result.Message });
     }
@@ -82,9 +89,12 @@ public class BooksController : ControllerBase
     [Authorize(Policy = PolicyNames.DeleteBooks)]
     public async Task<IActionResult> Delete(string id)
     {
+        if (!ObjectId.TryParse(id, out _))
+            return ApiProblemFactory.Result(400, "Invalid book identifier");
+
         var result = await _bookService.DeleteAsync(id);
         if (!result.Success)
-            return NotFound(new { error = result.Message });
+            return ApiProblemFactory.Result(404, "Book not found");
 
         return Ok(new { message = result.Message });
     }

@@ -1,7 +1,9 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using WebAppBookLibrary.Contracts.Audit;
 using WebAppBookLibrary.Models;
+using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
 
@@ -20,7 +22,7 @@ namespace WebAppBookLibrary.Controllers
         }
 
         [HttpGet("recent")]
-        public async Task<ActionResult<IEnumerable<LogEntry>>> GetRecentLogs()
+        public async Task<IActionResult> GetRecentLogs()
         {
             var logs = await _logs
                 .Find(_ => true)
@@ -28,14 +30,18 @@ namespace WebAppBookLibrary.Controllers
                 .Limit(100)
                 .ToListAsync();
 
-            return Ok(new { message = "Últimos 100 logs", data = logs });
+            return Ok(new
+            {
+                message = "Últimos 100 logs",
+                data = logs.Select(AuditLogResponse.From)
+            });
         }
 
         [HttpGet("count/{level}")]
         public async Task<ActionResult<object>> GetLogCountByLevel(string level)
         {
             if (string.IsNullOrEmpty(level))
-                return BadRequest(new { error = "Se requiere el nivel de log" });
+                return ApiProblemFactory.Result(400, "Log level is required");
 
             var count = await _logs
                 .CountDocumentsAsync(log => log.Level.ToUpper().Equals(level.ToUpper(), StringComparison.OrdinalIgnoreCase));

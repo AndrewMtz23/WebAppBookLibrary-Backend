@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WebAppBookLibrary.Contracts.Loans;
+using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
 
@@ -26,7 +27,7 @@ public class LoansController : ControllerBase
         var result = await _loanService.CreateLoanAsync(request.BookId, username!);
 
         if (!result.Success)
-            return BadRequest(new { error = result.Message });
+            return ApiProblemFactory.Result(400, "Loan could not be created");
 
         return Ok(new
         {
@@ -60,7 +61,7 @@ public class LoansController : ControllerBase
         var result = await _loanService.MarkAsReturnedAsync(id, username!);
 
         if (!result.Success)
-            return NotFound(new { error = result.Message });
+            return ApiProblemFactory.Result(404, "Loan could not be returned");
 
         return Ok(new { message = result.Message });
     }
@@ -71,7 +72,7 @@ public class LoansController : ControllerBase
     {
         var result = await _loanService.DeleteLoanAsync(id);
         if (!result.Success)
-            return NotFound(new { error = result.Message });
+            return ApiProblemFactory.Result(404, "Loan could not be deleted");
 
         return Ok(new { message = result.Message });
     }

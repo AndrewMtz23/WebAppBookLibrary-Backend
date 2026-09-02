@@ -37,7 +37,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync("ERROR", $"Error creating book: {ex.Message}", ex);
+                await _logService.LogAsync("ERROR", "Error creating book.", ex);
                 return (false, "Error creating book.", null);
             }
         }
@@ -55,7 +55,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync("ERROR", $"Error updating book: {ex.Message}", ex);
+                await _logService.LogAsync("ERROR", "Error updating book.", ex);
                 return (false, "Error updating book.");
             }
         }
@@ -73,7 +73,7 @@ namespace WebAppBookLibrary.Services
             }
             catch (Exception ex)
             {
-                await _logService.LogAsync("ERROR", $"Error deleting book: {ex.Message}", ex);
+                await _logService.LogAsync("ERROR", "Error deleting book.", ex);
                 return (false, "Error deleting book.");
             }
         }

@@ -21,24 +21,11 @@ namespace WebAppBookLibrary.Services
 
         public async Task LogAsync(string level, string message, Exception? exception = null)
         {
-            var username = _httpContextAccessor.HttpContext?.User?.Identity?.Name;
-            var controller = _httpContextAccessor.HttpContext?.Request.RouteValues["controller"]?.ToString();
-            var action = _httpContextAccessor.HttpContext?.Request.RouteValues["action"]?.ToString();
-            var method = _httpContextAccessor.HttpContext?.Request.Method;
-            var ip = _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString();
-
-            var logEntry = new LogEntry
-            {
-                Timestamp = DateTime.UtcNow,
-                Level = level,
-                Message = message,
-                Exception = exception?.ToString(),
-                Username = username,
-                Controller = controller,
-                Action = action,
-                Method = method,
-                IP = ip
-            };
+            var logEntry = AuditLogEntryFactory.Create(
+                level,
+                message,
+                exception,
+                _httpContextAccessor.HttpContext);
 
             await _logs.InsertOneAsync(logEntry);
 

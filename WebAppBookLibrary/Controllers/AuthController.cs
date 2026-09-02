@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using WebAppBookLibrary.Configuration;
 using WebAppBookLibrary.Contracts.Auth;
+using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Services;
 
 namespace WebAppBookLibrary.Controllers;
@@ -33,7 +34,7 @@ public class AuthController : ControllerBase
         try
         {
             if (request is null)
-                return BadRequest(new { error = "Registration details are required." });
+                return ApiProblemFactory.Result(400, "Registration details are required");
 
             await _logService.LogAsync("INFORMATION", $"Intento de registro para usuario: {request.Username}");
 
@@ -41,9 +42,9 @@ public class AuthController : ControllerBase
             if (!result.Success)
             {
                 if (result.ErrorCode == UserCreationErrorCodes.DuplicateUser)
-                    return Conflict(new { error = "User already exists." });
+                    return ApiProblemFactory.Result(409, "User already exists");
 
-                return BadRequest(new { error = "Invalid registration details." });
+                return ApiProblemFactory.Result(400, "Invalid registration details");
             }
 
             var createdUser = result.User!;
@@ -62,7 +63,7 @@ public class AuthController : ControllerBase
         catch (Exception ex)
         {
             await _logService.LogAsync("ERROR", $"Error durante el registro de usuario: {request?.Username}", ex);
-            return StatusCode(500, new { error = "Internal server error." });
+            return ApiProblemFactory.Result(500, "Internal server error");
         }
     }
 
@@ -73,12 +74,12 @@ public class AuthController : ControllerBase
         try
         {
             if (request is null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
-                return BadRequest(new { error = "Username and password are required." });
+                return ApiProblemFactory.Result(400, "Username and password are required");
 
             var user = await _userService.GetUserByUserNameAsync(request.Username);
 
             if (user == null || !PasswordHasher.VerifyPassword(request.Password, user.PasswordHash))
-                return Unauthorized(new { error = "Invalid username or password." });
+                return ApiProblemFactory.Result(401, "Invalid username or password");
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.Key));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -113,7 +114,7 @@ public class AuthController : ControllerBase
         catch (Exception ex)
         {
             await _logService.LogAsync("ERROR", $"Error durante el login de usuario: {request?.Username}", ex);
-            return StatusCode(500, new { error = "Internal server error." });
+            return ApiProblemFactory.Result(500, "Internal server error");
         }
     }
 }
