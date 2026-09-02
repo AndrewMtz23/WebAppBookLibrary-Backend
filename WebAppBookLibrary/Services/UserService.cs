@@ -1,6 +1,7 @@
 using WebAppBookLibrary.Contracts.Auth;
 using WebAppBookLibrary.Models;
 using WebAppBookLibrary.Security;
+using MongoDB.Driver;
 
 namespace WebAppBookLibrary.Services;
 
@@ -15,7 +16,7 @@ public sealed class UserService
 
     public async Task<User?> GetUserByUserNameAsync(string username)
     {
-        var user = await _userStore.FindByUsernameOrEmailAsync(username, string.Empty);
+        var user = await _userStore.FindByUsernameAsync(username);
         return user?.IsActive == true ? user : null;
     }
 
@@ -42,7 +43,15 @@ public sealed class UserService
             Role = RoleNames.User
         };
 
-        await _userStore.InsertAsync(user);
+        try
+        {
+            await _userStore.InsertAsync(user);
+        }
+        catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return new UserCreationResult(false, UserCreationErrorCodes.DuplicateUser, null);
+        }
+
         return new UserCreationResult(true, string.Empty, user);
     }
 }

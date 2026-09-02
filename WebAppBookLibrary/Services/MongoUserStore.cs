@@ -12,6 +12,12 @@ public sealed class MongoUserStore : IUserStore
         _users = mongoDBService.Users;
     }
 
+    public async Task<User?> FindByUsernameAsync(string username)
+    {
+        User? user = await _users.Find(user => user.Username == username).FirstOrDefaultAsync();
+        return user;
+    }
+
     public async Task<User?> FindByUsernameOrEmailAsync(string username, string email)
     {
         User? user = await _users.Find(user => user.Username == username || user.Email == email)
