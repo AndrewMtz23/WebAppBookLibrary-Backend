@@ -1,29 +1,33 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using WebAppBookLibrary.Configuration;
 using WebAppBookLibrary.Contracts.Auth;
 using WebAppBookLibrary.Services;
 
 namespace WebAppBookLibrary.Controllers;
 
 [ApiController]
-[Route("[controller]")]
+[Route("api/[controller]")]
 public class AuthController : ControllerBase
 {
-    private readonly IConfiguration _configuration;
+    private readonly JwtOptions _jwtOptions;
     private readonly UserService _userService;
     private readonly Logservice _logService;
 
-    public AuthController(IConfiguration configuration, UserService userService, Logservice logService)
+    public AuthController(IOptions<JwtOptions> jwtOptions, UserService userService, Logservice logService)
     {
-        _configuration = configuration;
+        _jwtOptions = jwtOptions.Value;
         _userService = userService;
         _logService = logService;
     }
 
     [HttpPost("register")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
         try
@@ -63,6 +67,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         try
@@ -75,15 +80,7 @@ public class AuthController : ControllerBase
             if (user == null || !PasswordHasher.VerifyPassword(request.Password, user.PasswordHash))
                 return Unauthorized(new { error = "Invalid username or password." });
 
-            var jwtSettings = _configuration.GetSection("Jwt");
-            var jwtKey = jwtSettings.GetValue<string>("Key");
-            var jwtIssuer = jwtSettings.GetValue<string>("Issuer");
-            var jwtAudience = jwtSettings.GetValue<string>("Audience");
-
-            if (string.IsNullOrWhiteSpace(jwtKey))
-                throw new InvalidOperationException("JWT key is missing from configuration.");
-
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.Key));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var claims = new[]
@@ -93,8 +90,8 @@ public class AuthController : ControllerBase
             };
 
             var token = new JwtSecurityToken(
-                issuer: jwtIssuer,
-                audience: jwtAudience,
+                issuer: _jwtOptions.Issuer,
+                audience: _jwtOptions.Audience,
                 claims: claims,
                 expires: DateTime.UtcNow.AddHours(1),
                 signingCredentials: creds);

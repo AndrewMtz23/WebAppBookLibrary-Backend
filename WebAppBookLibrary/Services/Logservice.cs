@@ -24,6 +24,8 @@ namespace WebAppBookLibrary.Services
             var username = _httpContextAccessor.HttpContext?.User?.Identity?.Name;
             var controller = _httpContextAccessor.HttpContext?.Request.RouteValues["controller"]?.ToString();
             var action = _httpContextAccessor.HttpContext?.Request.RouteValues["action"]?.ToString();
+            var method = _httpContextAccessor.HttpContext?.Request.Method;
+            var ip = _httpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString();
 
             var logEntry = new LogEntry
             {
@@ -33,7 +35,9 @@ namespace WebAppBookLibrary.Services
                 Exception = exception?.ToString(),
                 Username = username,
                 Controller = controller,
-                Action = action
+                Action = action,
+                Method = method,
+                IP = ip
             };
 
             await _logs.InsertOneAsync(logEntry);

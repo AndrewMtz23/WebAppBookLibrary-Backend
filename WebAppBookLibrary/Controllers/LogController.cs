@@ -1,14 +1,15 @@
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using WebAppBookLibrary.Models;
+using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
 
 namespace WebAppBookLibrary.Controllers
 {
     [ApiController]
-    [Route("[controller]")]
-    [Authorize(Roles = "admin, Admin")]
+    [Route("api/[controller]")]
+    [Authorize(Policy = PolicyNames.ViewAudit)]
     public class LogController : ControllerBase
     {
         private readonly IMongoCollection<LogEntry> _logs;
@@ -27,7 +28,7 @@ namespace WebAppBookLibrary.Controllers
                 .Limit(100)
                 .ToListAsync();
 
-            return Ok(new { message = "�ltimos 100 logs", data = logs });
+            return Ok(new { message = "Últimos 100 logs", data = logs });
         }
 
         [HttpGet("count/{level}")]
