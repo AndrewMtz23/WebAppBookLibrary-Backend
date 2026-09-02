@@ -238,6 +238,7 @@ namespace WebAppBookLibrary
                 options.UseInMemoryDatabase("LogDb"));
 
             services.AddSingleton<MongoDBService>();
+            services.AddScoped<IUserStore, MongoUserStore>();
             services.AddScoped<UserService>();
             services.AddScoped<BookService>();
             services.AddScoped<LoanService>();
