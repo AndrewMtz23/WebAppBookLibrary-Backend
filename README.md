@@ -47,7 +47,8 @@ Never commit `.env`. For production, inject secrets through the hosting platform
 | `POST` | `/api/auth/register` | Public, rate limited |
 | `POST` | `/api/auth/login` | Public, rate limited |
 | `GET` | `/api/books` and `/api/books/{id}` | Authenticated |
-| `POST`, `PUT` | `/api/books` | Librarian or admin |
+| `POST` | `/api/books` | Librarian or admin |
+| `PUT` | `/api/books/{id}` | Librarian or admin |
 | `DELETE` | `/api/books/{id}` | Admin |
 | `POST` | `/api/loans` | User |
 | `GET` | `/api/loans/my` | User |
