@@ -25,14 +25,16 @@ public sealed class MongoLoanStore : ILoanStore
         _users = users;
     }
 
-    public async Task<Book?> ReserveAvailableBookAsync(string bookId)
+    public async Task<Book?> ReserveAvailableBookAsync(string bookId, string loanId)
     {
-        if (!ObjectId.TryParse(bookId, out _))
+        if (!ObjectId.TryParse(bookId, out _) || !ObjectId.TryParse(loanId, out _))
             return null;
 
         var filter = Builders<Book>.Filter.Where(book =>
-            book.Id == bookId && book.IsAvailable);
-        var update = Builders<Book>.Update.Set(book => book.IsAvailable, false);
+            book.Id == bookId && book.IsAvailable && book.ActiveLoanId == null);
+        var update = Builders<Book>.Update
+            .Set(book => book.IsAvailable, false)
+            .Set(book => book.ActiveLoanId, loanId);
         var options = new FindOneAndUpdateOptions<Book, Book>
         {
             ReturnDocument = ReturnDocument.Before
@@ -41,13 +43,22 @@ public sealed class MongoLoanStore : ILoanStore
         return await _books.FindOneAndUpdateAsync(filter, update, options);
     }
 
-    public async Task<bool> RestoreBookAvailabilityAsync(string bookId)
+    public async Task<bool> RestoreBookAvailabilityAsync(
+        string bookId,
+        string loanId,
+        bool allowLegacyUncorrelated)
     {
-        if (!ObjectId.TryParse(bookId, out _))
+        if (!ObjectId.TryParse(bookId, out _) || !ObjectId.TryParse(loanId, out _))
             return false;
 
-        var filter = Builders<Book>.Filter.Where(book => book.Id == bookId);
-        var update = Builders<Book>.Update.Set(book => book.IsAvailable, true);
+        var filter = Builders<Book>.Filter.Where(book =>
+            book.Id == bookId &&
+            (book.ActiveLoanId == loanId ||
+             (book.ActiveLoanId == null &&
+              (allowLegacyUncorrelated || book.IsAvailable))));
+        var update = Builders<Book>.Update
+            .Set(book => book.IsAvailable, true)
+            .Set(book => book.ActiveLoanId, null);
         var result = await _books.UpdateOneAsync(filter, update);
 
         return result.MatchedCount == 1;

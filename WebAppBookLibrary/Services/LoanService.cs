@@ -37,6 +37,7 @@ public class LoanService
     public async Task<LoanOperationResult> CreateLoanAsync(string bookId, string username)
     {
         Book? reservedBook = null;
+        Loan? loan = null;
 
         try
         {
@@ -44,17 +45,18 @@ public class LoanService
             if (user is null)
                 return Failure(LoanOperationErrorCodes.InvalidUser);
 
-            reservedBook = await _loanStore.ReserveAvailableBookAsync(bookId);
-            if (reservedBook is null)
-                return Failure(LoanOperationErrorCodes.BookUnavailable);
-
-            var loan = new Loan
+            loan = new Loan
             {
+                Id = ObjectId.GenerateNewId().ToString(),
                 BookId = bookId,
                 UserId = user.Id,
                 LoanDate = DateTime.UtcNow,
                 IsReturned = false
             };
+
+            reservedBook = await _loanStore.ReserveAvailableBookAsync(bookId, loan.Id);
+            if (reservedBook is null)
+                return Failure(LoanOperationErrorCodes.BookUnavailable);
 
             await _loanStore.InsertLoanAsync(loan);
             return new LoanOperationResult(true, string.Empty, loan);
@@ -66,7 +68,10 @@ public class LoanService
 
             try
             {
-                if (await _loanStore.RestoreBookAvailabilityAsync(bookId))
+                if (await _loanStore.RestoreBookAvailabilityAsync(
+                        bookId,
+                        loan!.Id,
+                        allowLegacyUncorrelated: false))
                     return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
             }
             catch
@@ -208,7 +213,10 @@ public class LoanService
 
             loan.IsReturned = true;
             loan.ReturnDate = returnedAtUtc;
-            return await EnsureReturnedBookAvailableAsync(loan, idempotent: false);
+            return await EnsureReturnedBookAvailableAsync(
+                loan,
+                idempotent: false,
+                allowLegacyUncorrelated: true);
         }
         catch
         {
@@ -254,16 +262,23 @@ public class LoanService
         if (!CanReturn(loan, user, callerRole))
             return Failure(LoanOperationErrorCodes.Forbidden);
 
-        return await EnsureReturnedBookAvailableAsync(loan, idempotent: true);
+        return await EnsureReturnedBookAvailableAsync(
+            loan,
+            idempotent: true,
+            allowLegacyUncorrelated: false);
     }
 
     private async Task<LoanOperationResult> EnsureReturnedBookAvailableAsync(
         Loan loan,
-        bool idempotent)
+        bool idempotent,
+        bool allowLegacyUncorrelated)
     {
         try
         {
-            if (await _loanStore.RestoreBookAvailabilityAsync(loan.BookId))
+            if (await _loanStore.RestoreBookAvailabilityAsync(
+                    loan.BookId,
+                    loan.Id,
+                    allowLegacyUncorrelated))
                 return new LoanOperationResult(true, string.Empty, loan, idempotent);
         }
         catch

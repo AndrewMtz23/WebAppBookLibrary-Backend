@@ -1,6 +1,8 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
 using WebAppBookLibrary.Contracts.Books;
 using WebAppBookLibrary.Contracts.Loans;
+using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Tests;
 
@@ -22,6 +24,18 @@ public class RequestContractTests
         var names = typeof(CreateLoanRequest).GetProperties().Select(property => property.Name).ToArray();
 
         Assert.Equal(["BookId"], names);
+    }
+
+    [Fact]
+    public void Book_response_does_not_expose_active_loan_correlation()
+    {
+        var json = JsonSerializer.Serialize(new Book
+        {
+            Id = "507f1f77bcf86cd799439011",
+            ActiveLoanId = "507f1f77bcf86cd799439012"
+        });
+
+        Assert.DoesNotContain("ActiveLoanId", json, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]

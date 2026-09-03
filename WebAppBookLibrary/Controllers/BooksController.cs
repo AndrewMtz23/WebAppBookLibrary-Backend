@@ -77,7 +77,11 @@ public class BooksController : ControllerBase
         if (existingBook is null)
             return ApiProblemFactory.Result(404, "Book not found");
 
-        var updatedBook = MapBook(request, id, existingBook.IsAvailable);
+        var updatedBook = MapBook(
+            request,
+            id,
+            existingBook.IsAvailable,
+            existingBook.ActiveLoanId);
         var result = await _bookService.UpdateAsync(updatedBook);
         if (!result.Success)
             return ApiProblemFactory.Result(404, "Book not found");
@@ -99,7 +103,11 @@ public class BooksController : ControllerBase
         return Ok(new { message = result.Message });
     }
 
-    private static Book MapBook(UpsertBookRequest request, string id, bool isAvailable)
+    private static Book MapBook(
+        UpsertBookRequest request,
+        string id,
+        bool isAvailable,
+        string? activeLoanId = null)
     {
         return new Book
         {
@@ -108,7 +116,8 @@ public class BooksController : ControllerBase
             Author = request.Author,
             Year = request.Year,
             Genre = request.Genre,
-            IsAvailable = isAvailable
+            IsAvailable = isAvailable,
+            ActiveLoanId = activeLoanId
         };
     }
 }

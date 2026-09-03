@@ -4,9 +4,12 @@ namespace WebAppBookLibrary.Services;
 
 public interface ILoanStore
 {
-    Task<Book?> ReserveAvailableBookAsync(string bookId);
+    Task<Book?> ReserveAvailableBookAsync(string bookId, string loanId);
 
-    Task<bool> RestoreBookAvailabilityAsync(string bookId);
+    Task<bool> RestoreBookAvailabilityAsync(
+        string bookId,
+        string loanId,
+        bool allowLegacyUncorrelated);
 
     Task<User?> FindActiveUserAsync(string username);
 

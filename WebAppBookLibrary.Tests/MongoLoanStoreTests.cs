@@ -13,6 +13,7 @@ public class MongoLoanStoreTests
     public async Task ReserveAvailableBook_uses_identifier_and_availability_in_one_atomic_update()
     {
         const string bookId = "507f1f77bcf86cd799439011";
+        const string loanId = "507f1f77bcf86cd799439012";
         var books = new Mock<IMongoCollection<Book>>();
         var loans = new Mock<IMongoCollection<Loan>>();
         var users = new Mock<IMongoCollection<User>>();
@@ -34,7 +35,7 @@ public class MongoLoanStoreTests
             .ReturnsAsync(new Book { Id = bookId, IsAvailable = true });
         var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
 
-        var reserved = await store.ReserveAvailableBookAsync(bookId);
+        var reserved = await store.ReserveAvailableBookAsync(bookId, loanId);
 
         Assert.NotNull(reserved);
         Assert.NotNull(filter);
@@ -43,7 +44,9 @@ public class MongoLoanStoreTests
         var renderedUpdate = Render(update);
         Assert.Equal(ObjectId.Parse(bookId), renderedFilter["_id"].AsObjectId);
         Assert.True(renderedFilter["IsAvailable"].AsBoolean);
+        Assert.True(renderedFilter["ActiveLoanId"].IsBsonNull);
         Assert.False(renderedUpdate["$set"]["IsAvailable"].AsBoolean);
+        Assert.Equal(ObjectId.Parse(loanId), renderedUpdate["$set"]["ActiveLoanId"].AsObjectId);
         Assert.Equal(ReturnDocument.Before, options!.ReturnDocument);
     }
 
@@ -78,6 +81,7 @@ public class MongoLoanStoreTests
     public async Task RestoreBookAvailability_returns_false_when_book_does_not_exist()
     {
         const string bookId = "507f1f77bcf86cd799439011";
+        const string loanId = "507f1f77bcf86cd799439012";
         var books = new Mock<IMongoCollection<Book>>();
         var loans = new Mock<IMongoCollection<Loan>>();
         var users = new Mock<IMongoCollection<User>>();
@@ -89,7 +93,10 @@ public class MongoLoanStoreTests
             .ReturnsAsync(Mock.Of<UpdateResult>(result => result.MatchedCount == 0));
         var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
 
-        var restored = await store.RestoreBookAvailabilityAsync(bookId);
+        var restored = await store.RestoreBookAvailabilityAsync(
+            bookId,
+            loanId,
+            allowLegacyUncorrelated: false);
 
         Assert.False(restored);
     }
@@ -98,6 +105,50 @@ public class MongoLoanStoreTests
     public async Task RestoreBookAvailability_returns_true_when_book_was_already_available()
     {
         const string bookId = "507f1f77bcf86cd799439011";
+        const string loanId = "507f1f77bcf86cd799439012";
+        var books = new Mock<IMongoCollection<Book>>();
+        var loans = new Mock<IMongoCollection<Loan>>();
+        var users = new Mock<IMongoCollection<User>>();
+        FilterDefinition<Book>? filter = null;
+        UpdateDefinition<Book>? update = null;
+        books.Setup(x => x.UpdateOneAsync(
+                It.IsAny<FilterDefinition<Book>>(),
+                It.IsAny<UpdateDefinition<Book>>(),
+                It.IsAny<UpdateOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<FilterDefinition<Book>, UpdateDefinition<Book>, UpdateOptions, CancellationToken>(
+                (capturedFilter, capturedUpdate, _, _) =>
+                {
+                    filter = capturedFilter;
+                    update = capturedUpdate;
+                })
+            .ReturnsAsync(Mock.Of<UpdateResult>(result =>
+                result.MatchedCount == 1 && result.ModifiedCount == 0));
+        var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
+
+        var restored = await store.RestoreBookAvailabilityAsync(
+            bookId,
+            loanId,
+            allowLegacyUncorrelated: false);
+
+        Assert.True(restored);
+        Assert.NotNull(filter);
+        Assert.NotNull(update);
+        var renderedFilter = Render(filter);
+        var renderedUpdate = Render(update);
+        Assert.Contains(bookId, renderedFilter.ToJson());
+        Assert.Contains("ActiveLoanId", renderedFilter.ToJson());
+        Assert.Contains(loanId, renderedFilter.ToJson());
+        Assert.Contains("IsAvailable", renderedFilter.ToJson());
+        Assert.True(renderedUpdate["$set"]["IsAvailable"].AsBoolean);
+        Assert.True(renderedUpdate["$set"]["ActiveLoanId"].IsBsonNull);
+    }
+
+    [Fact]
+    public async Task RestoreBookAvailability_allows_uncorrelated_legacy_book_only_when_requested()
+    {
+        const string bookId = "507f1f77bcf86cd799439011";
+        const string loanId = "507f1f77bcf86cd799439012";
         var books = new Mock<IMongoCollection<Book>>();
         var loans = new Mock<IMongoCollection<Loan>>();
         var users = new Mock<IMongoCollection<User>>();
@@ -109,17 +160,20 @@ public class MongoLoanStoreTests
                 It.IsAny<CancellationToken>()))
             .Callback<FilterDefinition<Book>, UpdateDefinition<Book>, UpdateOptions, CancellationToken>(
                 (capturedFilter, _, _, _) => filter = capturedFilter)
-            .ReturnsAsync(Mock.Of<UpdateResult>(result =>
-                result.MatchedCount == 1 && result.ModifiedCount == 0));
+            .ReturnsAsync(Mock.Of<UpdateResult>(result => result.MatchedCount == 1));
         var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
 
-        var restored = await store.RestoreBookAvailabilityAsync(bookId);
+        var restored = await store.RestoreBookAvailabilityAsync(
+            bookId,
+            loanId,
+            allowLegacyUncorrelated: true);
 
         Assert.True(restored);
         Assert.NotNull(filter);
         var renderedFilter = Render(filter);
-        Assert.Equal(1, renderedFilter.ElementCount);
-        Assert.Equal(ObjectId.Parse(bookId), renderedFilter["_id"].AsObjectId);
+        Assert.Contains("ActiveLoanId", renderedFilter.ToJson());
+        Assert.Contains("\"ActiveLoanId\" : null", renderedFilter.ToJson());
+        Assert.DoesNotContain("IsAvailable", renderedFilter.ToJson());
     }
 
     [Fact]
@@ -130,8 +184,20 @@ public class MongoLoanStoreTests
         var users = new Mock<IMongoCollection<User>>();
         var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
 
-        Assert.Null(await store.ReserveAvailableBookAsync("not-an-object-id"));
-        Assert.False(await store.RestoreBookAvailabilityAsync("not-an-object-id"));
+        Assert.Null(await store.ReserveAvailableBookAsync(
+            "not-an-object-id",
+            "507f1f77bcf86cd799439012"));
+        Assert.False(await store.RestoreBookAvailabilityAsync(
+            "not-an-object-id",
+            "507f1f77bcf86cd799439012",
+            allowLegacyUncorrelated: false));
+        Assert.Null(await store.ReserveAvailableBookAsync(
+            "507f1f77bcf86cd799439011",
+            "not-an-object-id"));
+        Assert.False(await store.RestoreBookAvailabilityAsync(
+            "507f1f77bcf86cd799439011",
+            "not-an-object-id",
+            allowLegacyUncorrelated: false));
         Assert.Null(await store.FindActiveLoanAsync("not-an-object-id"));
         Assert.Null(await store.FindLoanAsync("not-an-object-id"));
         Assert.False(await store.MarkReturnedAsync("not-an-object-id", DateTime.UtcNow));
