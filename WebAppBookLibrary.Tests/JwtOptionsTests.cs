@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
-using Microsoft.Extensions.DependencyInjection;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using WebAppBookLibrary.Configuration;
@@ -35,7 +36,7 @@ public class JwtOptionsTests
     {
         var options = new JwtOptions
         {
-            Key = "a-signing-key-with-at-least-32-characters",
+            Key = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             Issuer = "issuer",
             Audience = "audience"
         };
@@ -73,9 +74,34 @@ public class JwtOptionsTests
     }
 
     [Theory]
+    [InlineData("your-secret-key-change-this-in-production")]
+    [InlineData("your-secure-secret-key-minimum-32-characters")]
+    public void JwtOptions_rejects_documented_placeholder_signing_keys(string signingKey)
+    {
+        var options = new JwtOptions
+        {
+            Key = signingKey,
+            Issuer = "issuer",
+            Audience = "audience"
+        };
+        var results = new List<ValidationResult>();
+
+        var isValid = Validator.TryValidateObject(
+            options,
+            new ValidationContext(options),
+            results,
+            validateAllProperties: true);
+
+        Assert.False(isValid);
+        Assert.Contains(results, result => result.MemberNames.Contains(nameof(JwtOptions.Key)));
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("short")]
     [InlineData("default-development-key-change-in-production-with-env-var")]
+    [InlineData("your-secret-key-change-this-in-production")]
+    [InlineData("your-secure-secret-key-minimum-32-characters")]
     public async Task Startup_rejects_missing_short_or_placeholder_signing_key(string? signingKey)
     {
         using var host = Host.CreateDefaultBuilder()

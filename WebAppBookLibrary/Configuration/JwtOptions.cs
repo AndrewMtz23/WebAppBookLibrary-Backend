@@ -4,6 +4,18 @@ namespace WebAppBookLibrary.Configuration;
 
 public sealed class JwtOptions : IValidatableObject
 {
+    private static readonly string[] PlaceholderMarkers =
+    [
+        "placeholder",
+        "change-me",
+        "change-this-in-production",
+        "change-in-production",
+        "default-development",
+        "minimum-32-characters",
+        "at-least-32-characters",
+        "replace-with"
+    ];
+
     public const string SectionName = "Jwt";
 
     [Required]
@@ -19,10 +31,16 @@ public sealed class JwtOptions : IValidatableObject
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         var normalizedKey = Key.Trim().ToLowerInvariant();
-        if (normalizedKey.Contains("placeholder", StringComparison.Ordinal) ||
-            normalizedKey.Contains("change-in-production", StringComparison.Ordinal) ||
-            normalizedKey.Contains("change-me", StringComparison.Ordinal) ||
-            normalizedKey.Contains("default-development", StringComparison.Ordinal))
+        var containsInstruction = PlaceholderMarkers.Any(marker =>
+            normalizedKey.Contains(marker, StringComparison.Ordinal));
+        var hasExamplePrefix =
+            (normalizedKey.StartsWith("your-", StringComparison.Ordinal) ||
+             normalizedKey.StartsWith("example-", StringComparison.Ordinal) ||
+             normalizedKey.StartsWith("sample-", StringComparison.Ordinal)) &&
+            (normalizedKey.Contains("key", StringComparison.Ordinal) ||
+             normalizedKey.Contains("secret", StringComparison.Ordinal));
+
+        if (containsInstruction || hasExamplePrefix)
         {
             yield return new ValidationResult(
                 "JWT signing key must not be a placeholder value.",

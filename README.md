@@ -92,8 +92,8 @@ MONGO_PASSWORD=your_mongodb_atlas_password
 MONGO_CLUSTER=your_cluster_name.mongodb.net
 MONGO_DATABASE=LibrarySecurityDb
 
-# JWT Configuration (Change the key for production)
-JWT_KEY=your-secure-secret-key-minimum-32-characters
+# JWT Configuration (generate first: openssl rand -base64 32)
+JWT_KEY=
 JWT_ISSUER=WebAppBookLibrary
 JWT_AUDIENCE=WebAppBookLibraryUsers
 
@@ -169,7 +169,7 @@ Swagger UI will be available at `https://localhost:7086/swagger` (Development en
 
 ### JWT Configuration
 
-- `JWT_KEY`: Secret key for signing JWT tokens (minimum 32 characters, use a strong random value in production)
+- `JWT_KEY`: Secret key for signing JWT tokens. Generate a unique value before startup with `openssl rand -base64 32`; an empty, short, or example value is rejected.
 - `JWT_ISSUER`: Token issuer identifier
 - `JWT_AUDIENCE`: Token audience identifier
 
