@@ -1,95 +1,119 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using WebAppBookLibrary.Models;
+using MongoDB.Bson;
+using WebAppBookLibrary.Contracts.Loans;
+using WebAppBookLibrary.Errors;
+using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
 
-namespace WebAppBookLibrary.Controllers
+namespace WebAppBookLibrary.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class LoansController : ControllerBase
 {
-    [ApiController]
-    [Route("[controller]")]
-    [Authorize]
-    public class LoansController : ControllerBase
+    private readonly LoanService _loanService;
+
+    public LoansController(LoanService loanService)
     {
-        private readonly LoanService _loanService;
+        _loanService = loanService;
+    }
 
-        public LoansController(LoanService loanService)
+    [HttpPost]
+    [Authorize(Policy = PolicyNames.BorrowBooks)]
+    public async Task<IActionResult> CreateLoan([FromBody] CreateLoanRequest request)
+    {
+        if (!ObjectId.TryParse(request.BookId, out _))
+            return LoanProblem(400, "Invalid book identifier", "invalid_identifier");
+
+        var username = User.Identity?.Name ?? string.Empty;
+        var result = await _loanService.CreateLoanAsync(request.BookId, username);
+
+        if (!result.Success)
         {
-            _loanService = loanService;
-        }
-
-        // Clase DTO para evitar error de "Id is required"
-        public class LoanRequest
-        {
-            public string BookId { get; set; } = null!;
-        }
-
-        // POST /loans
-        [HttpPost]
-        [Authorize(Roles = "user, User")]
-        public async Task<IActionResult> CreateLoan([FromBody] LoanRequest request)
-        {
-            var username = User.Identity?.Name;
-
-            if (string.IsNullOrEmpty(request.BookId))
-                return BadRequest(new { error = "BookId is required." });
-
-            var result = await _loanService.CreateLoanAsync(request.BookId, username!);
-
-            if (!result.Success)
-                return BadRequest(new { error = result.Message });
-
-            return Ok(new
+            return result.ErrorCode switch
             {
-                message = result.Message,
-                data = result.Loan
-            });
+                LoanOperationErrorCodes.BookUnavailable =>
+                    LoanProblem(409, "Book is not available", result.ErrorCode),
+                LoanOperationErrorCodes.InvalidUser =>
+                    LoanProblem(403, "Loan is not permitted", result.ErrorCode),
+                _ => LoanProblem(500, "Loan could not be created", result.ErrorCode)
+            };
         }
 
-        // GET /loans/my
-        [HttpGet("my")]
-        [Authorize(Roles = "user, User")]
-        public async Task<IActionResult> GetMyLoans()
+        return Ok(new
         {
-            var username = User.Identity?.Name;
-            var loans = await _loanService.GetLoansByUsernameAsync(username!);
+            message = "Loan created successfully",
+            data = result.Loan
+        });
+    }
 
-            return Ok(new { message = "My loans retrieved", data = loans });
-        }
+    [HttpGet("my")]
+    [Authorize(Policy = PolicyNames.BorrowBooks)]
+    public async Task<IActionResult> GetMyLoans()
+    {
+        var username = User.Identity?.Name ?? string.Empty;
+        var loans = await _loanService.GetLoansByUsernameAsync(username);
 
-        // GET /loans
-        [HttpGet]
-        [Authorize(Roles = "admin, Admin, Librarian, librarian")]
-        public async Task<IActionResult> GetAllLoans()
+        return Ok(new { message = "My loans retrieved", data = loans });
+    }
+
+    [HttpGet]
+    [Authorize(Policy = PolicyNames.ViewAllLoans)]
+    public async Task<IActionResult> GetAllLoans()
+    {
+        var loans = await _loanService.GetAllLoansWithDetailsAsync();
+        return Ok(new { message = "All loans retrieved", data = loans });
+    }
+
+    [HttpPut("{id}/return")]
+    public async Task<IActionResult> ReturnLoan(string id)
+    {
+        if (!ObjectId.TryParse(id, out _))
+            return LoanProblem(400, "Invalid loan identifier", "invalid_identifier");
+
+        var username = User.Identity?.Name ?? string.Empty;
+        var callerRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+        var result = await _loanService.MarkAsReturnedAsync(id, username, callerRole);
+
+        if (!result.Success)
         {
-            
-            var loans = await _loanService.GetAllLoansWithDetailsAsync();
-            return Ok(new { message = "All loans retrieved", data = loans });
+            return result.ErrorCode switch
+            {
+                LoanOperationErrorCodes.Forbidden or LoanOperationErrorCodes.InvalidUser =>
+                    LoanProblem(403, "Loan return is not permitted", result.ErrorCode),
+                LoanOperationErrorCodes.LoanNotFound =>
+                    LoanProblem(404, "Loan not found", result.ErrorCode),
+                _ => LoanProblem(500, "Loan could not be returned", result.ErrorCode)
+            };
         }
 
-        // PUT /loans/{id}/return
-        [HttpPut("{id}/return")]
-        [Authorize(Roles = "admin, Admin, librarian, Librarian, user, User")]
-        public async Task<IActionResult> ReturnLoan(string id)
-        {
-            var username = User.Identity?.Name;
-            var result = await _loanService.MarkAsReturnedAsync(id, username!);
+        var message = result.Idempotent ? "Loan was already returned" : "Loan marked as returned";
+        return Ok(new { message, idempotent = result.Idempotent });
+    }
 
-            if (!result.Success)
-                return NotFound(new { error = result.Message });
+    [HttpDelete("{id}")]
+    [Authorize(Policy = PolicyNames.DeleteBooks)]
+    public async Task<IActionResult> DeleteLoan(string id)
+    {
+        if (!ObjectId.TryParse(id, out _))
+            return LoanProblem(400, "Invalid loan identifier", "invalid_identifier");
 
-            return Ok(new { message = result.Message });
-        }
+        var result = await _loanService.DeleteLoanAsync(id);
+        if (!result.Success)
+            return ApiProblemFactory.Result(404, "Loan could not be deleted");
 
-        // DELETE /loans/{id}
-        [HttpDelete("{id}")]
-        [Authorize(Roles = "admin, Admin")]
-        public async Task<IActionResult> DeleteLoan(string id)
-        {
-            var result = await _loanService.DeleteLoanAsync(id);
-            if (!result.Success)
-                return NotFound(new { error = result.Message });
+        return Ok(new { message = result.Message });
+    }
 
-            return Ok(new { message = result.Message });
-        }
+    private static ObjectResult LoanProblem(int statusCode, string title, string errorCode)
+    {
+        var result = ApiProblemFactory.Result(statusCode, title);
+        if (result.Value is ProblemDetails problem)
+            problem.Extensions["code"] = errorCode;
+
+        return result;
     }
 }
