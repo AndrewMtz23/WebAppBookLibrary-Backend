@@ -19,5 +19,9 @@ public interface ILoanStore
 
     Task<Loan?> FindLoanAsync(string loanId);
 
+    Task<bool> HasActiveLoanForBookAsync(string bookId, string excludingLoanId);
+
     Task<bool> MarkReturnedAsync(string loanId, DateTime returnedAtUtc);
+
+    Task<bool> DeleteLoanAsync(string loanId);
 }

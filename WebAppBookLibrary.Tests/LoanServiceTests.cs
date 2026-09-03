@@ -163,7 +163,8 @@ public class LoanServiceTests
         store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
         store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync((Loan?)null);
         store.Setup(x => x.FindLoanAsync("l1")).ReturnsAsync(returnedLoan);
-        store.Setup(x => x.RestoreBookAvailabilityAsync("b1", "l1", false)).ReturnsAsync(true);
+        store.Setup(x => x.HasActiveLoanForBookAsync("b1", "l1")).ReturnsAsync(false);
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1", "l1", true)).ReturnsAsync(true);
         var service = CreateService(store);
 
         var result = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
@@ -172,7 +173,7 @@ public class LoanServiceTests
         Assert.Equal(string.Empty, result.ErrorCode);
         Assert.True(result.Idempotent);
         store.Verify(x => x.MarkReturnedAsync(It.IsAny<string>(), It.IsAny<DateTime>()), Times.Never);
-        store.Verify(x => x.RestoreBookAvailabilityAsync("b1", "l1", false), Times.Once);
+        store.Verify(x => x.RestoreBookAvailabilityAsync("b1", "l1", true), Times.Once);
     }
 
     [Fact]
@@ -183,7 +184,8 @@ public class LoanServiceTests
         store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync(Loan("l1", "b1", "u1"));
         store.Setup(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>())).ReturnsAsync(false);
         store.Setup(x => x.FindLoanAsync("l1")).ReturnsAsync(Loan("l1", "b1", "u1", isReturned: true));
-        store.Setup(x => x.RestoreBookAvailabilityAsync("b1", "l1", false)).ReturnsAsync(true);
+        store.Setup(x => x.HasActiveLoanForBookAsync("b1", "l1")).ReturnsAsync(false);
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1", "l1", true)).ReturnsAsync(true);
         var service = CreateService(store);
 
         var result = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
@@ -191,7 +193,7 @@ public class LoanServiceTests
         Assert.True(result.Success);
         Assert.True(result.Idempotent);
         store.Verify(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>()), Times.Once);
-        store.Verify(x => x.RestoreBookAvailabilityAsync("b1", "l1", false), Times.Once);
+        store.Verify(x => x.RestoreBookAvailabilityAsync("b1", "l1", true), Times.Once);
     }
 
     [Fact]
@@ -221,6 +223,7 @@ public class LoanServiceTests
             .ReturnsAsync(activeLoan)
             .ReturnsAsync((Loan?)null);
         store.Setup(x => x.FindLoanAsync("l1")).ReturnsAsync(returnedLoan);
+        store.Setup(x => x.HasActiveLoanForBookAsync("b1", "l1")).ReturnsAsync(false);
         store.Setup(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>())).ReturnsAsync(true);
         store.SetupSequence(x => x.RestoreBookAvailabilityAsync("b1", "l1", It.IsAny<bool>()))
             .ThrowsAsync(new InvalidOperationException("restore failed"))
@@ -254,6 +257,7 @@ public class LoanServiceTests
             .ReturnsAsync(firstLoan)
             .ReturnsAsync((Loan?)null);
         store.Setup(x => x.FindLoanAsync(firstLoanId)).ReturnsAsync(returnedFirstLoan);
+        store.Setup(x => x.HasActiveLoanForBookAsync("b1", firstLoanId)).ReturnsAsync(true);
         store.Setup(x => x.MarkReturnedAsync(firstLoanId, It.IsAny<DateTime>()))
             .ReturnsAsync(true);
         store.Setup(x => x.RestoreBookAvailabilityAsync(
@@ -302,6 +306,114 @@ public class LoanServiceTests
         store.Verify(
             x => x.RestoreBookAvailabilityAsync("b1", secondLoan.Loan.Id, It.IsAny<bool>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteLoan_releases_active_correlation_then_allows_new_reservation()
+    {
+        string? activeLoanId = "l1";
+        var bookIsAvailable = false;
+        var store = new Mock<ILoanStore>();
+        store.Setup(x => x.FindLoanAsync("l1"))
+            .ReturnsAsync(Loan("l1", "b1", "u1"));
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1", "l1", true))
+            .ReturnsAsync(() =>
+            {
+                if (activeLoanId != "l1")
+                    return false;
+
+                activeLoanId = null;
+                bookIsAvailable = true;
+                return true;
+            });
+        store.Setup(x => x.DeleteLoanAsync("l1")).ReturnsAsync(true);
+        store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
+        store.Setup(x => x.ReserveAvailableBookAsync("b1", It.IsAny<string>()))
+            .ReturnsAsync((string _, string loanId) =>
+            {
+                if (!bookIsAvailable || activeLoanId is not null)
+                    return null;
+
+                activeLoanId = loanId;
+                bookIsAvailable = false;
+                return Book("b1");
+            });
+        var service = CreateService(store);
+
+        var deleted = await service.DeleteLoanAsync("l1");
+        var replacementLoan = await service.CreateLoanAsync("b1", "ana");
+
+        Assert.True(deleted.Success);
+        Assert.True(replacementLoan.Success);
+        Assert.NotNull(replacementLoan.Loan);
+        Assert.Equal(replacementLoan.Loan.Id, activeLoanId);
+        Assert.False(bookIsAvailable);
+    }
+
+    [Fact]
+    public async Task DeleteLoan_does_not_release_different_active_correlation()
+    {
+        string? activeLoanId = "l2";
+        var bookIsAvailable = false;
+        var store = new Mock<ILoanStore>();
+        store.Setup(x => x.FindLoanAsync("l1"))
+            .ReturnsAsync(Loan("l1", "b1", "u1"));
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1", "l1", true))
+            .ReturnsAsync(() =>
+            {
+                if (activeLoanId != "l1")
+                    return false;
+
+                activeLoanId = null;
+                bookIsAvailable = true;
+                return true;
+            });
+        var service = CreateService(store);
+
+        var deleted = await service.DeleteLoanAsync("l1");
+
+        Assert.False(deleted.Success);
+        Assert.Equal("l2", activeLoanId);
+        Assert.False(bookIsAvailable);
+        store.Verify(x => x.DeleteLoanAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReturnLoan_retry_repairs_legacy_null_when_no_other_active_loan_exists()
+    {
+        var store = new Mock<ILoanStore>();
+        store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
+        store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync((Loan?)null);
+        store.Setup(x => x.FindLoanAsync("l1"))
+            .ReturnsAsync(Loan("l1", "b1", "u1", isReturned: true));
+        store.Setup(x => x.HasActiveLoanForBookAsync("b1", "l1")).ReturnsAsync(false);
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1", "l1", true)).ReturnsAsync(true);
+        var service = CreateService(store);
+
+        var result = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
+
+        Assert.True(result.Success);
+        Assert.True(result.Idempotent);
+        store.Verify(x => x.RestoreBookAvailabilityAsync("b1", "l1", true), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReturnLoan_retry_does_not_release_legacy_null_when_other_active_loan_exists()
+    {
+        var store = new Mock<ILoanStore>();
+        store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
+        store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync((Loan?)null);
+        store.Setup(x => x.FindLoanAsync("l1"))
+            .ReturnsAsync(Loan("l1", "b1", "u1", isReturned: true));
+        store.Setup(x => x.HasActiveLoanForBookAsync("b1", "l1")).ReturnsAsync(true);
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1", "l1", false)).ReturnsAsync(false);
+        var service = CreateService(store);
+
+        var result = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
+
+        Assert.False(result.Success);
+        Assert.Equal(LoanOperationErrorCodes.BookRestoreFailed, result.ErrorCode);
+        store.Verify(x => x.RestoreBookAvailabilityAsync("b1", "l1", false), Times.Once);
     }
 
     private static LoanService CreateService(Mock<ILoanStore> store)

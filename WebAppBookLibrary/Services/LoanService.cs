@@ -228,24 +228,33 @@ public class LoanService
     {
         try
         {
-            var objectId = ObjectId.Parse(loanId);
-            var loan = await _loans.Find(l => l.Id == objectId.ToString()).FirstOrDefaultAsync();
+            var loan = await _loanStore.FindLoanAsync(loanId);
             if (loan is null)
                 return (false, "Loan not found.");
 
             if (!loan.IsReturned)
             {
-                var update = Builders<Book>.Update.Set(b => b.IsAvailable, true);
-                await _books.UpdateOneAsync(b => b.Id == loan.BookId, update);
+                var released = await _loanStore.RestoreBookAvailabilityAsync(
+                    loan.BookId,
+                    loan.Id,
+                    allowLegacyUncorrelated: true);
+                if (!released)
+                    return (false, "Book release failed.");
             }
 
-            await _loans.DeleteOneAsync(l => l.Id == objectId.ToString());
-            await _logService.LogAsync(Warning, $"Loan {loanId} deleted.");
+            if (!await _loanStore.DeleteLoanAsync(loanId))
+                return (false, "Loan deletion failed.");
+
+            if (_logService is not null)
+                await _logService.LogAsync(Warning, $"Loan {loanId} deleted.");
+
             return (true, "Loan deleted successfully.");
         }
         catch (Exception ex)
         {
-            await _logService.LogAsync(Error, $"Error deleting loan {loanId}.", ex);
+            if (_logService is not null)
+                await _logService.LogAsync(Error, $"Error deleting loan {loanId}.", ex);
+
             return (false, "Error deleting loan.");
         }
     }
@@ -262,10 +271,13 @@ public class LoanService
         if (!CanReturn(loan, user, callerRole))
             return Failure(LoanOperationErrorCodes.Forbidden);
 
+        var hasOtherActiveLoan = await _loanStore.HasActiveLoanForBookAsync(
+            loan.BookId,
+            loan.Id);
         return await EnsureReturnedBookAvailableAsync(
             loan,
             idempotent: true,
-            allowLegacyUncorrelated: false);
+            allowLegacyUncorrelated: !hasOtherActiveLoan);
     }
 
     private async Task<LoanOperationResult> EnsureReturnedBookAvailableAsync(

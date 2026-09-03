@@ -99,6 +99,22 @@ public sealed class MongoLoanStore : ILoanStore
         return await _loans.Find(loan => loan.Id == loanId).FirstOrDefaultAsync();
     }
 
+    public async Task<bool> HasActiveLoanForBookAsync(string bookId, string excludingLoanId)
+    {
+        if (!ObjectId.TryParse(bookId, out _) || !ObjectId.TryParse(excludingLoanId, out _))
+            return false;
+
+        var filter = Builders<Loan>.Filter.Where(loan =>
+            loan.BookId == bookId &&
+            loan.Id != excludingLoanId &&
+            loan.IsReturned == false);
+        var count = await _loans.CountDocumentsAsync(
+            filter,
+            new CountOptions { Limit = 1 });
+
+        return count > 0;
+    }
+
     public async Task<bool> MarkReturnedAsync(string loanId, DateTime returnedAtUtc)
     {
         if (!ObjectId.TryParse(loanId, out _))
@@ -112,5 +128,14 @@ public sealed class MongoLoanStore : ILoanStore
         var result = await _loans.UpdateOneAsync(filter, update);
 
         return result.ModifiedCount == 1;
+    }
+
+    public async Task<bool> DeleteLoanAsync(string loanId)
+    {
+        if (!ObjectId.TryParse(loanId, out _))
+            return false;
+
+        var result = await _loans.DeleteOneAsync(loan => loan.Id == loanId);
+        return result.DeletedCount == 1;
     }
 }

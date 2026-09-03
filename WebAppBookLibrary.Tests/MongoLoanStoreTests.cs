@@ -78,6 +78,55 @@ public class MongoLoanStoreTests
     }
 
     [Fact]
+    public async Task HasActiveLoanForBook_uses_book_active_state_and_excludes_requested_loan()
+    {
+        const string bookId = "507f1f77bcf86cd799439011";
+        const string loanId = "507f1f77bcf86cd799439012";
+        var books = new Mock<IMongoCollection<Book>>();
+        var loans = new Mock<IMongoCollection<Loan>>();
+        var users = new Mock<IMongoCollection<User>>();
+        FilterDefinition<Loan>? filter = null;
+        loans.Setup(x => x.CountDocumentsAsync(
+                It.IsAny<FilterDefinition<Loan>>(),
+                It.IsAny<CountOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<FilterDefinition<Loan>, CountOptions, CancellationToken>(
+                (capturedFilter, _, _) => filter = capturedFilter)
+            .ReturnsAsync(1L);
+        var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
+
+        var found = await store.HasActiveLoanForBookAsync(bookId, loanId);
+
+        Assert.True(found);
+        Assert.NotNull(filter);
+        var renderedFilter = Render(filter);
+        var json = renderedFilter.ToJson();
+        Assert.Contains(bookId, json);
+        Assert.Contains(loanId, json);
+        Assert.Contains("$ne", json);
+        Assert.Contains("IsReturned", json);
+        Assert.Contains("false", json);
+    }
+
+    [Fact]
+    public async Task DeleteLoan_returns_true_when_correlated_record_is_deleted()
+    {
+        const string loanId = "507f1f77bcf86cd799439012";
+        var books = new Mock<IMongoCollection<Book>>();
+        var loans = new Mock<IMongoCollection<Loan>>();
+        var users = new Mock<IMongoCollection<User>>();
+        loans.Setup(x => x.DeleteOneAsync(
+                It.IsAny<FilterDefinition<Loan>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Mock.Of<DeleteResult>(result => result.DeletedCount == 1));
+        var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
+
+        var deleted = await store.DeleteLoanAsync(loanId);
+
+        Assert.True(deleted);
+    }
+
+    [Fact]
     public async Task RestoreBookAvailability_returns_false_when_book_does_not_exist()
     {
         const string bookId = "507f1f77bcf86cd799439011";
@@ -201,6 +250,13 @@ public class MongoLoanStoreTests
         Assert.Null(await store.FindActiveLoanAsync("not-an-object-id"));
         Assert.Null(await store.FindLoanAsync("not-an-object-id"));
         Assert.False(await store.MarkReturnedAsync("not-an-object-id", DateTime.UtcNow));
+        Assert.False(await store.HasActiveLoanForBookAsync(
+            "not-an-object-id",
+            "507f1f77bcf86cd799439012"));
+        Assert.False(await store.HasActiveLoanForBookAsync(
+            "507f1f77bcf86cd799439011",
+            "not-an-object-id"));
+        Assert.False(await store.DeleteLoanAsync("not-an-object-id"));
 
         books.VerifyNoOtherCalls();
         loans.VerifyNoOtherCalls();
