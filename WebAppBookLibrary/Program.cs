@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
-using DotNetEnv;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -23,9 +22,8 @@ public static class Program
 
     public static async Task Main(string[] args)
     {
-        Env.Load();
-
         var builder = WebApplication.CreateBuilder(args);
+        EnvironmentFileLoader.Load(builder.Environment.ContentRootPath);
         MapEnvironmentVariables(builder.Configuration);
 
         var corsOrigin = GetEnvironmentVariable("CORS_ORIGIN") ?? "http://localhost:4200";
