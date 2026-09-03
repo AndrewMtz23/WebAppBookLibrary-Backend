@@ -22,7 +22,9 @@ namespace WebAppBookLibrary.Services
                     throw new InvalidOperationException("Faltan variables de entorno o configuraciones para la conexión a MongoDB.");
                 }
 
-                var connectionString = $"mongodb+srv://{user}:{password}@{cluster}/?retryWrites=true&w=majority";
+                var encodedUser = Uri.EscapeDataString(user);
+                var encodedPassword = Uri.EscapeDataString(password);
+                var connectionString = $"mongodb+srv://{encodedUser}:{encodedPassword}@{cluster}/?retryWrites=true&w=majority";
                 var client = new MongoClient(connectionString);
                 _database = client.GetDatabase(dbName);
 
