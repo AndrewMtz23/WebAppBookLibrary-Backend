@@ -1,0 +1,23 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore
+        run: dotnet restore WebAppBookLibrary.sln
+      - name: Build
+        run: dotnet build WebAppBookLibrary.sln -c Release --no-restore
+      - name: Test
+        run: dotnet test WebAppBookLibrary.sln -c Release --no-build --verbosity normal

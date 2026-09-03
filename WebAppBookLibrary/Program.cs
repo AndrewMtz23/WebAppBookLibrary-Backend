@@ -26,7 +26,7 @@ public static class Program
         Env.Load();
 
         var builder = WebApplication.CreateBuilder(args);
-        MapJwtEnvironmentVariables(builder.Configuration);
+        MapEnvironmentVariables(builder.Configuration);
 
         var corsOrigin = GetEnvironmentVariable("CORS_ORIGIN") ?? "http://localhost:4200";
         ConfigureCors(builder.Services, corsOrigin);
@@ -109,11 +109,13 @@ public static class Program
         });
     }
 
-    private static void MapJwtEnvironmentVariables(IConfiguration configuration)
+    private static void MapEnvironmentVariables(IConfiguration configuration)
     {
         MapEnvironmentVariable(configuration, "JWT_KEY", $"{JwtOptions.SectionName}:Key");
         MapEnvironmentVariable(configuration, "JWT_ISSUER", $"{JwtOptions.SectionName}:Issuer");
         MapEnvironmentVariable(configuration, "JWT_AUDIENCE", $"{JwtOptions.SectionName}:Audience");
+        MapEnvironmentVariable(configuration, "MONGO_CLUSTER", "MongoDB:ClusterUri");
+        MapEnvironmentVariable(configuration, "MONGO_DATABASE", "MongoDB:DatabaseName");
     }
 
     private static void MapEnvironmentVariable(
