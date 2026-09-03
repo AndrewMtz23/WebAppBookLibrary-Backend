@@ -1,6 +1,6 @@
 # BookLibrary API
 
-REST API for a portfolio-grade digital library. It handles user registration and JWT login, role-based book administration, concurrency-safe loans, and restricted audit logs.
+REST API for a production-minded digital library. It handles user registration and JWT login, role-based book administration, concurrency-safe loans, and restricted audit logs.
 
 ## Highlights
 
@@ -76,4 +76,4 @@ See [`docs/superpowers/specs/2026-09-02-professional-portfolio-hardening-design.
 
 ## Current boundaries
 
-This portfolio iteration intentionally does not include refresh tokens, password recovery, email verification, MFA, privileged-role administration, Docker, or cloud deployment. The dashboard is an operational smoke check, not a penetration test or security certification.
+This iteration intentionally does not include refresh tokens, password recovery, email verification, MFA, privileged-role administration, Docker, or cloud deployment. The dashboard is an operational smoke check, not a penetration test or security certification.
