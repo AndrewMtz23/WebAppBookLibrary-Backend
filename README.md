@@ -72,3 +72,7 @@ GitHub Actions runs the same restore, build, and test checks on pushes and pull 
 Controllers own HTTP contracts and authorization; services own business rules; store abstractions isolate MongoDB operations. Audit entries intentionally exclude credentials, tokens, and exception internals. The in-memory EF Core context is used only by the audit service infrastructure; library data lives in MongoDB.
 
 See [`docs/superpowers/specs/2026-09-02-professional-portfolio-hardening-design.md`](docs/superpowers/specs/2026-09-02-professional-portfolio-hardening-design.md) for the hardening decisions and threat model.
+
+## Current boundaries
+
+This portfolio iteration intentionally does not include refresh tokens, password recovery, email verification, MFA, privileged-role administration, Docker, or cloud deployment. The dashboard is an operational smoke check, not a penetration test or security certification.

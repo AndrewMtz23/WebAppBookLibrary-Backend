@@ -12,7 +12,7 @@ Turn the existing Book Library application into a credible, demonstrable portfol
 
 This iteration will:
 
-- retain Angular 17, ASP.NET Core 8, and MongoDB;
+- use Angular 20, ASP.NET Core 8, and MongoDB (Angular was upgraded from 17 after the production dependency audit identified high-severity advisories);
 - make public registration create only `user` accounts;
 - normalize roles and enforce permissions in the API;
 - protect the catalog consistently in both frontend and backend;

@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using WebAppBookLibrary.Configuration;
 using WebAppBookLibrary.Contracts.Auth;
 using WebAppBookLibrary.Errors;
+using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
 
 namespace WebAppBookLibrary.Controllers;
@@ -78,7 +79,9 @@ public class AuthController : ControllerBase
 
             var user = await _userService.GetUserByUserNameAsync(request.Username);
 
-            if (user == null || !PasswordHasher.VerifyPassword(request.Password, user.PasswordHash))
+            if (user == null ||
+                !PasswordHasher.VerifyPassword(request.Password, user.PasswordHash) ||
+                !RoleNames.TryNormalize(user.Role, out var role))
                 return ApiProblemFactory.Result(401, "Invalid username or password");
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.Key));
@@ -87,7 +90,7 @@ public class AuthController : ControllerBase
             var claims = new[]
             {
                 new Claim(ClaimTypes.Name, request.Username),
-                new Claim(ClaimTypes.Role, user.Role)
+                new Claim(ClaimTypes.Role, role)
             };
 
             var token = new JwtSecurityToken(
@@ -107,7 +110,7 @@ public class AuthController : ControllerBase
                     id = user.Id,
                     username = user.Username,
                     email = user.Email,
-                    role = user.Role
+                    role
                 }
             });
         }
