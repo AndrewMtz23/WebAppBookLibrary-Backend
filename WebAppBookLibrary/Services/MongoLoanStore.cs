@@ -41,15 +41,16 @@ public sealed class MongoLoanStore : ILoanStore
         return await _books.FindOneAndUpdateAsync(filter, update, options);
     }
 
-    public async Task RestoreBookAvailabilityAsync(string bookId)
+    public async Task<bool> RestoreBookAvailabilityAsync(string bookId)
     {
         if (!ObjectId.TryParse(bookId, out _))
-            return;
+            return false;
 
-        var filter = Builders<Book>.Filter.Where(book =>
-            book.Id == bookId && !book.IsAvailable);
+        var filter = Builders<Book>.Filter.Where(book => book.Id == bookId);
         var update = Builders<Book>.Update.Set(book => book.IsAvailable, true);
-        await _books.UpdateOneAsync(filter, update);
+        var result = await _books.UpdateOneAsync(filter, update);
+
+        return result.MatchedCount == 1;
     }
 
     public async Task<User?> FindActiveUserAsync(string username)

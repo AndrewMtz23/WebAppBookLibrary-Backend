@@ -6,7 +6,7 @@ public interface ILoanStore
 {
     Task<Book?> ReserveAvailableBookAsync(string bookId);
 
-    Task RestoreBookAvailabilityAsync(string bookId);
+    Task<bool> RestoreBookAvailabilityAsync(string bookId);
 
     Task<User?> FindActiveUserAsync(string username);
 

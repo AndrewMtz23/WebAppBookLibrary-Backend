@@ -75,6 +75,54 @@ public class MongoLoanStoreTests
     }
 
     [Fact]
+    public async Task RestoreBookAvailability_returns_false_when_book_does_not_exist()
+    {
+        const string bookId = "507f1f77bcf86cd799439011";
+        var books = new Mock<IMongoCollection<Book>>();
+        var loans = new Mock<IMongoCollection<Loan>>();
+        var users = new Mock<IMongoCollection<User>>();
+        books.Setup(x => x.UpdateOneAsync(
+                It.IsAny<FilterDefinition<Book>>(),
+                It.IsAny<UpdateDefinition<Book>>(),
+                It.IsAny<UpdateOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Mock.Of<UpdateResult>(result => result.MatchedCount == 0));
+        var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
+
+        var restored = await store.RestoreBookAvailabilityAsync(bookId);
+
+        Assert.False(restored);
+    }
+
+    [Fact]
+    public async Task RestoreBookAvailability_returns_true_when_book_was_already_available()
+    {
+        const string bookId = "507f1f77bcf86cd799439011";
+        var books = new Mock<IMongoCollection<Book>>();
+        var loans = new Mock<IMongoCollection<Loan>>();
+        var users = new Mock<IMongoCollection<User>>();
+        FilterDefinition<Book>? filter = null;
+        books.Setup(x => x.UpdateOneAsync(
+                It.IsAny<FilterDefinition<Book>>(),
+                It.IsAny<UpdateDefinition<Book>>(),
+                It.IsAny<UpdateOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<FilterDefinition<Book>, UpdateDefinition<Book>, UpdateOptions, CancellationToken>(
+                (capturedFilter, _, _, _) => filter = capturedFilter)
+            .ReturnsAsync(Mock.Of<UpdateResult>(result =>
+                result.MatchedCount == 1 && result.ModifiedCount == 0));
+        var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
+
+        var restored = await store.RestoreBookAvailabilityAsync(bookId);
+
+        Assert.True(restored);
+        Assert.NotNull(filter);
+        var renderedFilter = Render(filter);
+        Assert.Equal(1, renderedFilter.ElementCount);
+        Assert.Equal(ObjectId.Parse(bookId), renderedFilter["_id"].AsObjectId);
+    }
+
+    [Fact]
     public async Task Invalid_identifiers_do_not_reach_mongo()
     {
         var books = new Mock<IMongoCollection<Book>>();
@@ -83,7 +131,7 @@ public class MongoLoanStoreTests
         var store = new MongoLoanStore(books.Object, loans.Object, users.Object);
 
         Assert.Null(await store.ReserveAvailableBookAsync("not-an-object-id"));
-        await store.RestoreBookAvailabilityAsync("not-an-object-id");
+        Assert.False(await store.RestoreBookAvailabilityAsync("not-an-object-id"));
         Assert.Null(await store.FindActiveLoanAsync("not-an-object-id"));
         Assert.Null(await store.FindLoanAsync("not-an-object-id"));
         Assert.False(await store.MarkReturnedAsync("not-an-object-id", DateTime.UtcNow));

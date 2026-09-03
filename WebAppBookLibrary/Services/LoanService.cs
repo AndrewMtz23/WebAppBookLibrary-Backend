@@ -61,19 +61,22 @@ public class LoanService
         }
         catch
         {
-            if (reservedBook is not null)
+            if (reservedBook is null)
+                return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
+
+            try
             {
-                try
-                {
-                    await _loanStore.RestoreBookAvailabilityAsync(bookId);
-                }
-                catch
-                {
-                    // The insertion error remains the primary operation result.
-                }
+                if (await _loanStore.RestoreBookAvailabilityAsync(bookId))
+                    return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
+            }
+            catch
+            {
+                // Report the consistency failure below without exposing exception details.
             }
 
-            return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
+            await LogConsistencyFailureAsync(
+                "Loan reservation rollback failed; book availability may be inconsistent.");
+            return Failure(LoanOperationErrorCodes.ReservationRollbackFailed);
         }
     }
 
@@ -203,11 +206,9 @@ public class LoanService
             if (!marked)
                 return await ResolveMissingActiveLoanAsync(loanId, user, callerRole);
 
-            await _loanStore.RestoreBookAvailabilityAsync(loan.BookId);
-
             loan.IsReturned = true;
             loan.ReturnDate = returnedAtUtc;
-            return new LoanOperationResult(true, string.Empty, loan);
+            return await EnsureReturnedBookAvailableAsync(loan, idempotent: false);
         }
         catch
         {
@@ -253,7 +254,41 @@ public class LoanService
         if (!CanReturn(loan, user, callerRole))
             return Failure(LoanOperationErrorCodes.Forbidden);
 
-        return new LoanOperationResult(true, string.Empty, loan, Idempotent: true);
+        return await EnsureReturnedBookAvailableAsync(loan, idempotent: true);
+    }
+
+    private async Task<LoanOperationResult> EnsureReturnedBookAvailableAsync(
+        Loan loan,
+        bool idempotent)
+    {
+        try
+        {
+            if (await _loanStore.RestoreBookAvailabilityAsync(loan.BookId))
+                return new LoanOperationResult(true, string.Empty, loan, idempotent);
+        }
+        catch
+        {
+            // Report the consistency failure below without exposing exception details.
+        }
+
+        await LogConsistencyFailureAsync(
+            "Book availability restore failed after loan return; availability may be inconsistent.");
+        return Failure(LoanOperationErrorCodes.BookRestoreFailed);
+    }
+
+    private async Task LogConsistencyFailureAsync(string message)
+    {
+        if (_logService is null)
+            return;
+
+        try
+        {
+            await _logService.LogAsync(Error, message);
+        }
+        catch
+        {
+            // Logging failure must not hide the stable consistency error result.
+        }
     }
 
     private static bool CanReturn(Loan loan, User user, string callerRole)

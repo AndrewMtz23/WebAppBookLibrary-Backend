@@ -31,6 +31,7 @@ public class LoanServiceTests
         store.Setup(x => x.ReserveAvailableBookAsync("b1")).ReturnsAsync(Book("b1"));
         store.Setup(x => x.InsertLoanAsync(It.IsAny<Loan>()))
             .ThrowsAsync(new InvalidOperationException("write failed"));
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1")).ReturnsAsync(true);
         var service = CreateService(store);
 
         var result = await service.CreateLoanAsync("b1", "ana");
@@ -38,6 +39,41 @@ public class LoanServiceTests
         Assert.False(result.Success);
         Assert.Equal(LoanOperationErrorCodes.LoanPersistenceFailed, result.ErrorCode);
         store.Verify(x => x.RestoreBookAvailabilityAsync("b1"), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateLoan_reports_distinct_error_when_insert_and_rollback_both_throw()
+    {
+        var store = new Mock<ILoanStore>();
+        store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
+        store.Setup(x => x.ReserveAvailableBookAsync("b1")).ReturnsAsync(Book("b1"));
+        store.Setup(x => x.InsertLoanAsync(It.IsAny<Loan>()))
+            .ThrowsAsync(new InvalidOperationException("insert failed"));
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1"))
+            .ThrowsAsync(new InvalidOperationException("restore failed"));
+        var service = CreateService(store);
+
+        var result = await service.CreateLoanAsync("b1", "ana");
+
+        Assert.False(result.Success);
+        Assert.Equal(LoanOperationErrorCodes.ReservationRollbackFailed, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task CreateLoan_reports_distinct_error_when_rollback_returns_false()
+    {
+        var store = new Mock<ILoanStore>();
+        store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
+        store.Setup(x => x.ReserveAvailableBookAsync("b1")).ReturnsAsync(Book("b1"));
+        store.Setup(x => x.InsertLoanAsync(It.IsAny<Loan>()))
+            .ThrowsAsync(new InvalidOperationException("insert failed"));
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1")).ReturnsAsync(false);
+        var service = CreateService(store);
+
+        var result = await service.CreateLoanAsync("b1", "ana");
+
+        Assert.False(result.Success);
+        Assert.Equal(LoanOperationErrorCodes.ReservationRollbackFailed, result.ErrorCode);
     }
 
     [Fact]
@@ -65,6 +101,7 @@ public class LoanServiceTests
         store.Setup(x => x.FindActiveUserAsync("staff")).ReturnsAsync(User("staff-id", "staff"));
         store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync(Loan("l1", "b1", "u2"));
         store.Setup(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>())).ReturnsAsync(true);
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1")).ReturnsAsync(true);
         var service = CreateService(store);
 
         var result = await service.MarkAsReturnedAsync("l1", "staff", role);
@@ -81,6 +118,7 @@ public class LoanServiceTests
         store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
         store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync(Loan("l1", "b1", "u1"));
         store.Setup(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>())).ReturnsAsync(true);
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1")).ReturnsAsync(true);
         var service = CreateService(store);
 
         var result = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
@@ -112,6 +150,7 @@ public class LoanServiceTests
         store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
         store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync((Loan?)null);
         store.Setup(x => x.FindLoanAsync("l1")).ReturnsAsync(returnedLoan);
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1")).ReturnsAsync(true);
         var service = CreateService(store);
 
         var result = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
@@ -120,17 +159,18 @@ public class LoanServiceTests
         Assert.Equal(string.Empty, result.ErrorCode);
         Assert.True(result.Idempotent);
         store.Verify(x => x.MarkReturnedAsync(It.IsAny<string>(), It.IsAny<DateTime>()), Times.Never);
-        store.Verify(x => x.RestoreBookAvailabilityAsync(It.IsAny<string>()), Times.Never);
+        store.Verify(x => x.RestoreBookAvailabilityAsync("b1"), Times.Once);
     }
 
     [Fact]
-    public async Task ReturnLoan_reports_lost_conditional_update_as_idempotent_without_restoring_twice()
+    public async Task ReturnLoan_repairs_availability_after_losing_conditional_update()
     {
         var store = new Mock<ILoanStore>();
         store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
         store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync(Loan("l1", "b1", "u1"));
         store.Setup(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>())).ReturnsAsync(false);
         store.Setup(x => x.FindLoanAsync("l1")).ReturnsAsync(Loan("l1", "b1", "u1", isReturned: true));
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1")).ReturnsAsync(true);
         var service = CreateService(store);
 
         var result = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
@@ -138,7 +178,51 @@ public class LoanServiceTests
         Assert.True(result.Success);
         Assert.True(result.Idempotent);
         store.Verify(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>()), Times.Once);
-        store.Verify(x => x.RestoreBookAvailabilityAsync(It.IsAny<string>()), Times.Never);
+        store.Verify(x => x.RestoreBookAvailabilityAsync("b1"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReturnLoan_reports_book_restore_failure_when_store_returns_false()
+    {
+        var store = new Mock<ILoanStore>();
+        store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
+        store.Setup(x => x.FindActiveLoanAsync("l1")).ReturnsAsync(Loan("l1", "b1", "u1"));
+        store.Setup(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>())).ReturnsAsync(true);
+        store.Setup(x => x.RestoreBookAvailabilityAsync("b1")).ReturnsAsync(false);
+        var service = CreateService(store);
+
+        var result = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
+
+        Assert.False(result.Success);
+        Assert.Equal(LoanOperationErrorCodes.BookRestoreFailed, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ReturnLoan_retries_restore_after_mark_succeeded_and_first_restore_threw()
+    {
+        var activeLoan = Loan("l1", "b1", "u1");
+        var returnedLoan = Loan("l1", "b1", "u1", isReturned: true);
+        var store = new Mock<ILoanStore>();
+        store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(User("u1", "ana"));
+        store.SetupSequence(x => x.FindActiveLoanAsync("l1"))
+            .ReturnsAsync(activeLoan)
+            .ReturnsAsync((Loan?)null);
+        store.Setup(x => x.FindLoanAsync("l1")).ReturnsAsync(returnedLoan);
+        store.Setup(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>())).ReturnsAsync(true);
+        store.SetupSequence(x => x.RestoreBookAvailabilityAsync("b1"))
+            .ThrowsAsync(new InvalidOperationException("restore failed"))
+            .ReturnsAsync(true);
+        var service = CreateService(store);
+
+        var first = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
+        var retry = await service.MarkAsReturnedAsync("l1", "ana", RoleNames.User);
+
+        Assert.False(first.Success);
+        Assert.Equal(LoanOperationErrorCodes.BookRestoreFailed, first.ErrorCode);
+        Assert.True(retry.Success);
+        Assert.True(retry.Idempotent);
+        store.Verify(x => x.MarkReturnedAsync("l1", It.IsAny<DateTime>()), Times.Once);
+        store.Verify(x => x.RestoreBookAvailabilityAsync("b1"), Times.Exactly(2));
     }
 
     private static LoanService CreateService(Mock<ILoanStore> store)

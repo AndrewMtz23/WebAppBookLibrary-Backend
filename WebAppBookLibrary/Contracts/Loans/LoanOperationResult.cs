@@ -13,6 +13,8 @@ public static class LoanOperationErrorCodes
     public const string InvalidUser = "invalid_user";
     public const string BookUnavailable = "book_unavailable";
     public const string LoanPersistenceFailed = "loan_persistence_failed";
+    public const string ReservationRollbackFailed = "reservation_rollback_failed";
+    public const string BookRestoreFailed = "book_restore_failed";
     public const string LoanNotFound = "loan_not_found";
     public const string Forbidden = "forbidden";
 }
