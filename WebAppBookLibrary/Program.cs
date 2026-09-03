@@ -195,6 +195,7 @@ public static class Program
 
         services.AddSingleton<MongoDBService>();
         services.AddScoped<IUserStore, MongoUserStore>();
+        services.AddScoped<ILoanStore, MongoLoanStore>();
         services.AddScoped<UserService>();
         services.AddScoped<BookService>();
         services.AddScoped<LoanService>();

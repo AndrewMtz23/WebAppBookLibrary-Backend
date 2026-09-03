@@ -1,260 +1,278 @@
-﻿using MongoDB.Driver;
 using MongoDB.Bson;
+using MongoDB.Driver;
+using WebAppBookLibrary.Contracts.Loans;
 using WebAppBookLibrary.Models;
+using WebAppBookLibrary.Security;
 
-namespace WebAppBookLibrary.Services
+namespace WebAppBookLibrary.Services;
+
+public class LoanService
 {
-    public class LoanService
+    private const string Error = "ERROR";
+    private const string Warning = "WARNING";
+
+    private readonly ILoanStore _loanStore;
+    private readonly IMongoCollection<Loan> _loans = null!;
+    private readonly IMongoCollection<Book> _books = null!;
+    private readonly IMongoCollection<User> _users = null!;
+    private readonly Logservice _logService = null!;
+
+    public LoanService(ILoanStore loanStore)
     {
-        private const string ERROR = "ERROR";
-        private const string WARNING = "WARNING";
-        private const string INFORMATION = "INFORMATION";
+        _loanStore = loanStore;
+    }
 
-        private readonly IMongoCollection<Loan> _loans;
-        private readonly IMongoCollection<Book> _books;
-        private readonly IMongoCollection<User> _users;
-        private readonly Logservice _logService;
+    public LoanService(
+        ILoanStore loanStore,
+        MongoDBService dbService,
+        Logservice logService)
+        : this(loanStore)
+    {
+        _loans = dbService.Loans;
+        _books = dbService.Books;
+        _users = dbService.Users;
+        _logService = logService;
+    }
 
-        public LoanService(MongoDBService dbService, Logservice logService)
+    public async Task<LoanOperationResult> CreateLoanAsync(string bookId, string username)
+    {
+        Book? reservedBook = null;
+
+        try
         {
-            _loans = dbService.Loans;
-            _books = dbService.Books;
-            _users = dbService.Users;
-            _logService = logService;
+            var user = await _loanStore.FindActiveUserAsync(username);
+            if (user is null)
+                return Failure(LoanOperationErrorCodes.InvalidUser);
+
+            reservedBook = await _loanStore.ReserveAvailableBookAsync(bookId);
+            if (reservedBook is null)
+                return Failure(LoanOperationErrorCodes.BookUnavailable);
+
+            var loan = new Loan
+            {
+                BookId = bookId,
+                UserId = user.Id,
+                LoanDate = DateTime.UtcNow,
+                IsReturned = false
+            };
+
+            await _loanStore.InsertLoanAsync(loan);
+            return new LoanOperationResult(true, string.Empty, loan);
         }
-
-        public async Task<(bool Success, string Message, Loan? Loan)> CreateLoanAsync(string bookId, string username)
+        catch
         {
-            try
+            if (reservedBook is not null)
             {
-                var book = await _books.Find(b => b.Id == bookId).FirstOrDefaultAsync();
-                if (book == null)
-                    return (false, "Book not found", null);
-                if (!book.IsAvailable)
-                    return (false, "Book is not available for loan", null);
-
-                var user = await _users.Find(u => u.Username == username).FirstOrDefaultAsync();
-                if (user == null || !user.IsActive)
-                    return (false, "Invalid or inactive user", null);
-
-                var loan = new Loan
+                try
                 {
-                    BookId = bookId,
-                    UserId = user.Id,
-                    LoanDate = DateTime.UtcNow,
-                    IsReturned = false
-                };
-
-                await _loans.InsertOneAsync(loan);
-
-                var update = Builders<Book>.Update.Set(b => b.IsAvailable, false);
-                var result = await _books.UpdateOneAsync(b => b.Id == bookId, update);
-
-                if (result.MatchedCount == 0)
-                {
-                    await _logService.LogAsync(ERROR, $"Book {bookId} not matched for update.");
-                    return (false, "Book update failed: not matched", null);
+                    await _loanStore.RestoreBookAvailabilityAsync(bookId);
                 }
-
-                if (result.ModifiedCount == 0)
+                catch
                 {
-                    await _logService.LogAsync(WARNING, $"Book {bookId} matched but not modified.");
-                    return (false, "Book update failed: not modified", null);
+                    // The insertion error remains the primary operation result.
                 }
+            }
 
-                await _logService.LogAsync(INFORMATION, $"Loan created by {username} for book {bookId}");
-                return (true, "Loan created successfully", loan);
-            }
-            catch (Exception ex)
-            {
-                await _logService.LogAsync(ERROR, $"Error creating loan for book {bookId} by {username}.", ex);
-                return (false, "Unexpected error occurred while creating loan", null);
-            }
+            return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
         }
+    }
 
-        public async Task<List<object>> GetLoansByUsernameAsync(string username)
+    public async Task<List<object>> GetLoansByUsernameAsync(string username)
+    {
+        try
         {
-            try
+            var user = await _users.Find(u => u.Username == username).FirstOrDefaultAsync();
+            if (user is null)
+                return [];
+
+            var loans = await _loans.Find(l => l.UserId == user.Id).ToListAsync();
+            var result = new List<object>();
+
+            foreach (var loan in loans)
             {
-                var user = await _users.Find(u => u.Username == username).FirstOrDefaultAsync();
-                if (user == null) return new List<object>();
+                var book = await _books.Find(b => b.Id == loan.BookId).FirstOrDefaultAsync();
+                var dueDate = loan.LoanDate.AddDays(14);
 
-                var loans = await _loans.Find(l => l.UserId == user.Id).ToListAsync();
+                var status = "active";
+                if (loan.IsReturned)
+                    status = "returned";
+                else if (DateTime.UtcNow > dueDate)
+                    status = "overdue";
 
-                var result = new List<object>();
-
-                foreach (var loan in loans)
+                result.Add(new
                 {
-                    var book = await _books.Find(b => b.Id == loan.BookId).FirstOrDefaultAsync();
-                    var dueDate = loan.LoanDate.AddDays(14); // plazo de 14 días
-
-                    string status = "active";
-                    if (loan.IsReturned)
-                        status = "returned";
-                    else if (DateTime.UtcNow > dueDate)
-                        status = "overdue";
-
-                    result.Add(new
-                    {
-                        id = loan.Id,
-                        bookTitle = book?.Title ?? "N/A",
-                        loanDate = loan.LoanDate,
-                        dueDate = dueDate,
-                        returnDate = loan.ReturnDate,
-                        status = status
-                    });
-                }
-
-                return result;
+                    id = loan.Id,
+                    bookTitle = book?.Title ?? "N/A",
+                    loanDate = loan.LoanDate,
+                    dueDate,
+                    returnDate = loan.ReturnDate,
+                    status
+                });
             }
-            catch (Exception ex)
-            {
-                await _logService.LogAsync("ERROR", $"Error fetching loans for user {username}.", ex);
-                return new List<object>();
-            }
+
+            return result;
         }
-
-
-        public async Task<List<Loan>> GetAllLoansAsync()
+        catch (Exception ex)
         {
-            try
-            {
-                return await _loans.Find(_ => true).ToListAsync();
-            }
-            catch (Exception ex)
-            {
-                await _logService.LogAsync(ERROR, "Error fetching all loans.", ex);
-                return new List<Loan>();
-            }
+            await _logService.LogAsync(Error, $"Error fetching loans for user {username}.", ex);
+            return [];
         }
+    }
 
-        public async Task<List<object>> GetAllLoansWithDetailsAsync()
+    public async Task<List<Loan>> GetAllLoansAsync()
+    {
+        try
         {
-            try
-            {
-                var loans = await _loans.Find(_ => true).ToListAsync();
-                var result = new List<object>();
-
-                foreach (var loan in loans)
-                {
-                    var book = await _books.Find(b => b.Id == loan.BookId).FirstOrDefaultAsync();
-                    var user = await _users.Find(u => u.Id == loan.UserId).FirstOrDefaultAsync();
-                    var dueDate = loan.LoanDate.AddDays(14); // plazo de 14 días
-
-                    string status = "active";
-                    if (loan.IsReturned)
-                        status = "returned";
-                    else if (DateTime.UtcNow > dueDate)
-                        status = "overdue";
-
-                    result.Add(new
-                    {
-                        id = loan.Id,
-                        bookId = loan.BookId,
-                        bookTitle = book?.Title ?? "N/A",
-                        bookAuthor = book?.Author ?? "N/A",
-                        userId = loan.UserId,
-                        username = user?.Username ?? "N/A",
-                        userEmail = user?.Email ?? "N/A",
-                        loanDate = loan.LoanDate,
-                        dueDate = dueDate,
-                        returnDate = loan.ReturnDate,
-                        status = status,
-                        isOverdue = DateTime.UtcNow > dueDate && !loan.IsReturned
-                    });
-                }
-
-                return result.OrderByDescending(x => ((dynamic)x).loanDate).ToList();
-            }
-            catch (Exception ex)
-            {
-                await _logService.LogAsync(ERROR, "Error fetching all loans with details.", ex);
-                return new List<object>();
-            }
+            return await _loans.Find(_ => true).ToListAsync();
         }
-
-        public async Task<(bool Success, string Message)> MarkAsReturnedAsync(string loanId, string username)
+        catch (Exception ex)
         {
-            try
+            await _logService.LogAsync(Error, "Error fetching all loans.", ex);
+            return [];
+        }
+    }
+
+    public async Task<List<object>> GetAllLoansWithDetailsAsync()
+    {
+        try
+        {
+            var loans = await _loans.Find(_ => true).ToListAsync();
+            var result = new List<object>();
+
+            foreach (var loan in loans)
             {
-                var objectId = ObjectId.Parse(loanId);
-                var loan = await _loans.Find(l => l.Id == objectId.ToString() && !l.IsReturned).FirstOrDefaultAsync();
+                var book = await _books.Find(b => b.Id == loan.BookId).FirstOrDefaultAsync();
+                var user = await _users.Find(u => u.Id == loan.UserId).FirstOrDefaultAsync();
+                var dueDate = loan.LoanDate.AddDays(14);
 
-                if (loan == null)
+                var status = "active";
+                if (loan.IsReturned)
+                    status = "returned";
+                else if (DateTime.UtcNow > dueDate)
+                    status = "overdue";
+
+                result.Add(new
                 {
-                    await _logService.LogAsync(WARNING, $"Loan {loanId} not found.");
-                    return (false, "Loan not found.");
-                }
+                    id = loan.Id,
+                    bookId = loan.BookId,
+                    bookTitle = book?.Title ?? "N/A",
+                    bookAuthor = book?.Author ?? "N/A",
+                    userId = loan.UserId,
+                    username = user?.Username ?? "N/A",
+                    userEmail = user?.Email ?? "N/A",
+                    loanDate = loan.LoanDate,
+                    dueDate,
+                    returnDate = loan.ReturnDate,
+                    status,
+                    isOverdue = DateTime.UtcNow > dueDate && !loan.IsReturned
+                });
+            }
 
-                var user = await _users.Find(u => u.Username == username).FirstOrDefaultAsync();
-                if (user == null)
-                {
-                    await _logService.LogAsync(WARNING, $"User {username} not found trying to return loan {loanId}.");
-                    return (false, "Unauthorized.");
-                }
+            return result.OrderByDescending(x => ((dynamic)x).loanDate).ToList();
+        }
+        catch (Exception ex)
+        {
+            await _logService.LogAsync(Error, "Error fetching all loans with details.", ex);
+            return [];
+        }
+    }
 
-                var isAdminOrLibrarian = user.Role.ToLower() == "admin" || user.Role.ToLower() == "librarian";
+    public async Task<LoanOperationResult> MarkAsReturnedAsync(
+        string loanId,
+        string username,
+        string callerRole)
+    {
+        if (!IsCanonicalRole(callerRole))
+            return Failure(LoanOperationErrorCodes.Forbidden);
 
-                // Validar que el préstamo le pertenezca si es usuario normal
-                if (!isAdminOrLibrarian && loan.UserId != user.Id)
-                {
-                    await _logService.LogAsync(WARNING, $"User {username} tried to return a loan not belonging to them.");
-                    return (false, "You are not allowed to return this loan.");
-                }
+        try
+        {
+            var user = await _loanStore.FindActiveUserAsync(username);
+            if (user is null)
+                return Failure(LoanOperationErrorCodes.InvalidUser);
 
-                loan.IsReturned = true;
-                loan.ReturnDate = DateTime.UtcNow;
+            var loan = await _loanStore.FindActiveLoanAsync(loanId);
+            if (loan is null)
+                return await ResolveMissingActiveLoanAsync(loanId, user, callerRole);
 
-                await _loans.ReplaceOneAsync(l => l.Id == objectId.ToString(), loan);
+            if (!CanReturn(loan, user, callerRole))
+                return Failure(LoanOperationErrorCodes.Forbidden);
 
+            var returnedAtUtc = DateTime.UtcNow;
+            var marked = await _loanStore.MarkReturnedAsync(loanId, returnedAtUtc);
+            if (!marked)
+                return await ResolveMissingActiveLoanAsync(loanId, user, callerRole);
+
+            await _loanStore.RestoreBookAvailabilityAsync(loan.BookId);
+
+            loan.IsReturned = true;
+            loan.ReturnDate = returnedAtUtc;
+            return new LoanOperationResult(true, string.Empty, loan);
+        }
+        catch
+        {
+            return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
+        }
+    }
+
+    public async Task<(bool Success, string Message)> DeleteLoanAsync(string loanId)
+    {
+        try
+        {
+            var objectId = ObjectId.Parse(loanId);
+            var loan = await _loans.Find(l => l.Id == objectId.ToString()).FirstOrDefaultAsync();
+            if (loan is null)
+                return (false, "Loan not found.");
+
+            if (!loan.IsReturned)
+            {
                 var update = Builders<Book>.Update.Set(b => b.IsAvailable, true);
-                var updateResult = await _books.UpdateOneAsync(b => b.Id == loan.BookId, update);
-
-                if (updateResult.MatchedCount == 0)
-                {
-                    await _logService.LogAsync(ERROR, $"Book {loan.BookId} not matched for update while returning loan {loanId}.");
-                    return (false, "Book update failed: not matched.");
-                }
-
-                if (updateResult.ModifiedCount == 0)
-                {
-                    await _logService.LogAsync(WARNING, $"Book {loan.BookId} matched but not modified for loan {loanId}.");
-                }
-
-                await _logService.LogAsync(INFORMATION, $"Loan {loanId} marked as returned by {username}.");
-                return (true, "Loan marked as returned.");
+                await _books.UpdateOneAsync(b => b.Id == loan.BookId, update);
             }
-            catch (Exception ex)
-            {
-                await _logService.LogAsync(ERROR, $"Error returning loan {loanId}.", ex);
-                return (false, "Error returning loan.");
-            }
+
+            await _loans.DeleteOneAsync(l => l.Id == objectId.ToString());
+            await _logService.LogAsync(Warning, $"Loan {loanId} deleted.");
+            return (true, "Loan deleted successfully.");
         }
-
-
-        public async Task<(bool Success, string Message)> DeleteLoanAsync(string loanId)
+        catch (Exception ex)
         {
-            try
-            {
-                var objectId = ObjectId.Parse(loanId);
-                var loan = await _loans.Find(l => l.Id == objectId.ToString()).FirstOrDefaultAsync();
-                if (loan == null) return (false, "Loan not found.");
-
-                if (!loan.IsReturned)
-                {
-                    var update = Builders<Book>.Update.Set(b => b.IsAvailable, true);
-                    await _books.UpdateOneAsync(b => b.Id == loan.BookId, update);
-                }
-
-                await _loans.DeleteOneAsync(l => l.Id == objectId.ToString());
-                await _logService.LogAsync(WARNING, $"Loan {loanId} deleted.");
-                return (true, "Loan deleted successfully.");
-            }
-            catch (Exception ex)
-            {
-                await _logService.LogAsync(ERROR, $"Error deleting loan {loanId}.", ex);
-                return (false, "Error deleting loan.");
-            }
+            await _logService.LogAsync(Error, $"Error deleting loan {loanId}.", ex);
+            return (false, "Error deleting loan.");
         }
+    }
+
+    private async Task<LoanOperationResult> ResolveMissingActiveLoanAsync(
+        string loanId,
+        User user,
+        string callerRole)
+    {
+        var loan = await _loanStore.FindLoanAsync(loanId);
+        if (loan is null || !loan.IsReturned)
+            return Failure(LoanOperationErrorCodes.LoanNotFound);
+
+        if (!CanReturn(loan, user, callerRole))
+            return Failure(LoanOperationErrorCodes.Forbidden);
+
+        return new LoanOperationResult(true, string.Empty, loan, Idempotent: true);
+    }
+
+    private static bool CanReturn(Loan loan, User user, string callerRole)
+    {
+        return callerRole switch
+        {
+            RoleNames.User => loan.UserId == user.Id,
+            RoleNames.Librarian or RoleNames.Admin => true,
+            _ => false
+        };
+    }
+
+    private static bool IsCanonicalRole(string callerRole)
+    {
+        return callerRole is RoleNames.User or RoleNames.Librarian or RoleNames.Admin;
+    }
+
+    private static LoanOperationResult Failure(string errorCode)
+    {
+        return new LoanOperationResult(false, errorCode);
     }
 }
