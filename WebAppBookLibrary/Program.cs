@@ -62,6 +62,9 @@ public static class Program
             options.AddPolicy(
                 PolicyNames.ViewAudit,
                 policy => policy.RequireRole(RoleNames.Admin));
+            options.AddPolicy(
+                PolicyNames.ManageUsers,
+                policy => policy.RequireRole(RoleNames.Admin));
         });
     }
 
@@ -199,8 +202,10 @@ public static class Program
         services.AddScoped<UserService>();
         services.AddScoped<IBookStore, MongoBookStore>();
         services.AddScoped<IFavoriteStore, MongoFavoriteStore>();
+        services.AddScoped<IAdminUserStore, MongoAdminUserStore>();
         services.AddScoped<BookService>();
         services.AddScoped<FavoriteService>();
+        services.AddScoped<AdminUserService>();
         services.AddScoped<LoanService>();
         services.AddScoped<Logservice>();
 
