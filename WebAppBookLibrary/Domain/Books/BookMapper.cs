@@ -7,6 +7,7 @@ public static class BookMapper
 {
     public static Book ToNewEntity(BookWriteRequest request, string id, DateTime nowUtc)
     {
+        nowUtc = nowUtc.Kind == DateTimeKind.Utc ? nowUtc : nowUtc.ToUniversalTime();
         var legacy = request.Authors.Count == 0 && !string.IsNullOrWhiteSpace(request.Author);
         var authors = BookRules.NormalizeList(legacy ? [request.Author!] : request.Authors).ToList();
         var genres = BookRules.NormalizeList(request.Genres.Count == 0 && !string.IsNullOrWhiteSpace(request.Genre) ? [request.Genre!] : request.Genres).ToList();

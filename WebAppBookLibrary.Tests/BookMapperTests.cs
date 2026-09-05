@@ -54,4 +54,21 @@ public sealed class BookMapperTests
         Assert.Null(book.AvailableCopies);
         Assert.Null(book.ActiveLoanId);
     }
+
+    [Fact]
+    public void ToNewEntity_NormalizesTimestampsToUtc()
+    {
+        var request = new BookWriteRequest
+        {
+            Title = "UTC title", Authors = ["Author"],
+            Description = "A sufficiently descriptive physical book description.",
+            Genres = ["Essay"], MediaType = MediaTypes.Physical, TotalCopies = 1
+        };
+        var local = DateTime.SpecifyKind(new DateTime(2026, 9, 5, 12, 0, 0), DateTimeKind.Local);
+
+        var book = BookMapper.ToNewEntity(request, "507f1f77bcf86cd799439011", local);
+
+        Assert.Equal(DateTimeKind.Utc, book.CreatedAt.Kind);
+        Assert.Equal(local.ToUniversalTime(), book.CreatedAt);
+    }
 }
