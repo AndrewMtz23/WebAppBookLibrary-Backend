@@ -203,9 +203,11 @@ public static class Program
         services.AddScoped<IBookStore, MongoBookStore>();
         services.AddScoped<IFavoriteStore, MongoFavoriteStore>();
         services.AddScoped<IAdminUserStore, MongoAdminUserStore>();
+        services.AddScoped<IDashboardStore, MongoDashboardStore>();
         services.AddScoped<BookService>();
         services.AddScoped<FavoriteService>();
         services.AddScoped<AdminUserService>();
+        services.AddScoped<DashboardService>();
         services.AddScoped<LoanService>();
         services.AddScoped<Logservice>();
 
