@@ -73,6 +73,41 @@ public class AuditLogTests
         Assert.DoesNotContain("secret-password-value", response.Message);
     }
 
+    [Fact]
+    public void DomainEvent_RemovesSensitiveMetadataAndKeepsCorrelation()
+    {
+        var context = new DefaultHttpContext { TraceIdentifier = "corr-123" };
+        var entry = AuditLogEntryFactory.BookChanged(
+            "updated",
+            "actor-1",
+            "book-1",
+            new Dictionary<string, string>
+            {
+                ["field"] = "title",
+                ["password"] = "secret",
+                ["token"] = "jwt",
+                ["digitalResourceUrl"] = "https://private.example/book.pdf"
+            },
+            context);
+
+        Assert.Equal("book.updated", entry.EventType);
+        Assert.Equal("corr-123", entry.CorrelationId);
+        Assert.Equal("actor-1", entry.ActorId);
+        Assert.Equal("book-1", entry.TargetId);
+        Assert.Equal("title", entry.Metadata["field"]);
+        Assert.Single(entry.Metadata);
+    }
+
+    [Fact]
+    public void PublicAuditResponse_MasksIpAddress()
+    {
+        var entry = new LogEntry { Id = ObjectId.GenerateNewId().ToString(), IP = "192.0.2.123" };
+
+        var response = AuditLogResponse.From(entry);
+
+        Assert.Equal("192.0.2.0", response.IP);
+    }
+
     private static InvalidOperationException CreateSensitiveException()
     {
         try

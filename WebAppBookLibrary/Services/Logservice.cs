@@ -32,6 +32,8 @@ namespace WebAppBookLibrary.Services
             LogToProvider(level, message, exception);
         }
 
+        public Task LogDomainAsync(LogEntry entry) => _logs.InsertOneAsync(entry);
+
         private void LogToProvider(string level, string message, Exception? exception)
         {
             switch (level.ToUpper())

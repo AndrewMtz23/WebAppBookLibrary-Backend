@@ -101,7 +101,9 @@ namespace WebAppBookLibrary.Services
             var logBuilder = Builders<LogEntry>.IndexKeys;
             var logIndexes = new[]
             {
-                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.Timestamp))
+                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_timestamp" }),
+                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.Level).Descending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_level_timestamp" }),
+                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.EventType).Descending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_event_timestamp" })
             };
             await LogEntries.Indexes.CreateManyAsync(logIndexes);
 
