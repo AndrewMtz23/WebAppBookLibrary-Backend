@@ -41,6 +41,7 @@ namespace WebAppBookLibrary.Services
         public IMongoCollection<LogEntry> LogEntries => _database.GetCollection<LogEntry>("LogEntries");
         public IMongoCollection<Book> Books => _database.GetCollection<Book>("Books");
         public IMongoCollection<Loan> Loans => _database.GetCollection<Loan>("Loans");
+        public IMongoCollection<Favorite> Favorites => _database.GetCollection<Favorite>("Favorites");
 
         public async Task CreateIndexesAsync()
         {
@@ -90,6 +91,12 @@ namespace WebAppBookLibrary.Services
                 new CreateIndexModel<Loan>(loanBuilder.Ascending(loan => loan.BookId).Ascending(loan => loan.Status), new CreateIndexOptions { Name = "ix_loans_book_status" })
             };
             await Loans.Indexes.CreateManyAsync(loanIndexes);
+
+            var favoriteBuilder = Builders<Favorite>.IndexKeys;
+            await Favorites.Indexes.CreateManyAsync([
+                new CreateIndexModel<Favorite>(favoriteBuilder.Ascending(item => item.UserId).Ascending(item => item.BookId), new CreateIndexOptions { Name = "ux_favorites_user_book", Unique = true }),
+                new CreateIndexModel<Favorite>(favoriteBuilder.Ascending(item => item.UserId).Descending(item => item.CreatedAt), new CreateIndexOptions { Name = "ix_favorites_user_created" })
+            ]);
 
             var logBuilder = Builders<LogEntry>.IndexKeys;
             var logIndexes = new[]
