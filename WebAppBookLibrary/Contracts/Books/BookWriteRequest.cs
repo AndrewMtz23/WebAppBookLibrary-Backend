@@ -20,15 +20,22 @@ public sealed record BookWriteRequest : IValidatableObject
     public string MediaType { get; init; } = MediaTypes.Physical;
     public Uri? DigitalResourceUrl { get; init; }
     public int? TotalCopies { get; init; }
+    public string? Author { get; init; }
+    public int? Year { get; init; }
+    public string? Genre { get; init; }
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         foreach (var error in ValidateText(Title, nameof(Title), 1, 200)) yield return error;
         foreach (var error in ValidateOptionalText(Subtitle, nameof(Subtitle), 200)) yield return error;
-        foreach (var error in ValidateText(Description, nameof(Description), 20, 5000)) yield return error;
+        var legacy = Authors.Count == 0 && !string.IsNullOrWhiteSpace(Author);
+        var effectiveAuthors = legacy ? new[] { Author! } : Authors;
+        var effectiveGenres = legacy && Genres.Count == 0 && !string.IsNullOrWhiteSpace(Genre) ? new[] { Genre! } : Genres;
+        var effectiveDescription = legacy && string.IsNullOrWhiteSpace(Description) ? "Sin descripción disponible para este registro heredado." : Description;
+        foreach (var error in ValidateText(effectiveDescription, nameof(Description), 20, 5000)) yield return error;
         foreach (var error in ValidateOptionalText(Publisher, nameof(Publisher), 160)) yield return error;
-        foreach (var error in ValidateList(Authors, nameof(Authors), 1, 10)) yield return error;
-        foreach (var error in ValidateList(Genres, nameof(Genres), 1, 8)) yield return error;
+        foreach (var error in ValidateList(effectiveAuthors, nameof(Authors), 1, 10)) yield return error;
+        foreach (var error in ValidateList(effectiveGenres, nameof(Genres), 1, 8)) yield return error;
         foreach (var error in ValidateList(Tags, nameof(Tags), 0, 20)) yield return error;
 
         if (PageCount is < 1 or > 100000)
@@ -44,7 +51,8 @@ public sealed record BookWriteRequest : IValidatableObject
         if (CoverUrl is not null && CoverUrl.Scheme != Uri.UriSchemeHttps)
             yield return Invalid("Cover URL must use HTTPS.", nameof(CoverUrl));
 
-        foreach (var error in BookRules.ValidateMedia(MediaType, DigitalResourceUrl?.AbsoluteUri, TotalCopies, TotalCopies))
+        var effectiveCopies = legacy && TotalCopies is null ? 1 : TotalCopies;
+        foreach (var error in BookRules.ValidateMedia(MediaType, DigitalResourceUrl?.AbsoluteUri, effectiveCopies, effectiveCopies))
         {
             var member = error.Field switch
             {

@@ -50,6 +50,14 @@ public sealed class BookContractTests
         Assert.True(normalized.IncludeIdTieBreaker);
     }
 
+    [Fact]
+    public void BookWriteRequest_AcceptsTheLegacyAuthorYearGenreShapeDuringTransition()
+    {
+        var request = new BookWriteRequest { Title = "Legacy title", Author = "Legacy author", Year = 1998, Genre = "Novel" };
+
+        Assert.Empty(Validate(request));
+    }
+
     private static BookWriteRequest ValidDigitalRequest() => new()
     {
         Title = "Parable of the Sower",

@@ -24,69 +24,56 @@ public class BooksController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] BookQuery query, CancellationToken cancellationToken)
     {
-        var books = await _bookService.GetAllAsync();
-        return Ok(new { message = "Books retrieved", data = books });
+        var page = await _bookService.SearchAsync(query, User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian), cancellationToken);
+        return Ok(page);
     }
 
     [HttpGet("{id}")]
-    public async Task<IActionResult> GetById(string id)
+    public async Task<IActionResult> GetById(string id, CancellationToken cancellationToken = default)
     {
         if (!ObjectId.TryParse(id, out _))
             return ApiProblemFactory.Result(400, "Invalid book identifier");
 
-        var book = await _bookService.GetByIdAsync(id);
+        var includeInactive = User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian);
+        var book = await _bookService.GetDetailAsync(id, includeInactive, cancellationToken);
         if (book is null)
             return ApiProblemFactory.Result(404, "Book not found");
 
-        return Ok(new { message = "Book retrieved", data = book });
+        return Ok(book);
     }
 
     [HttpPost]
     [Authorize(Policy = PolicyNames.ManageBooks)]
-    public async Task<IActionResult> Create([FromBody] UpsertBookRequest request)
+    public async Task<IActionResult> Create([FromBody] BookWriteRequest request, CancellationToken cancellationToken)
     {
-        var book = MapBook(request, ObjectId.GenerateNewId().ToString(), isAvailable: true);
-        await _logService.LogAsync("INFORMATION", $"Intentando registrar nuevo libro: {book.Title}");
-
-        var result = await _bookService.CreateAsync(book);
+        var result = await _bookService.CreateAsync(request, ObjectId.GenerateNewId().ToString(), DateTime.UtcNow, cancellationToken);
         if (!result.Success)
         {
-            await _logService.LogAsync("WARNING", $"Error al registrar libro: {result.Message}");
-            return ApiProblemFactory.Result(400, "Book could not be created");
+            return result.ErrorCode == "isbn_conflict"
+                ? BookProblem(409, "ISBN already exists", result.ErrorCode)
+                : BookProblem(400, "Book could not be created", result.ErrorCode);
         }
-
-        await _logService.LogAsync("INFORMATION", $"Libro registrado exitosamente: {result.Book!.Title}");
-
-        return CreatedAtAction(nameof(GetById), new { id = result.Book.Id }, new
-        {
-            message = result.Message,
-            data = result.Book
-        });
+        return CreatedAtAction(nameof(GetById), new { id = result.Book!.Id }, result.Book);
     }
 
     [HttpPut("{id}")]
     [Authorize(Policy = PolicyNames.ManageBooks)]
-    public async Task<IActionResult> Update(string id, [FromBody] UpsertBookRequest request)
+    public async Task<IActionResult> Update(string id, [FromBody] BookWriteRequest request, CancellationToken cancellationToken = default)
     {
         if (!ObjectId.TryParse(id, out _))
             return ApiProblemFactory.Result(400, "Invalid book identifier");
 
-        var existingBook = await _bookService.GetByIdAsync(id);
-        if (existingBook is null)
-            return ApiProblemFactory.Result(404, "Book not found");
-
-        var updatedBook = MapBook(
-            request,
-            id,
-            existingBook.IsAvailable,
-            existingBook.ActiveLoanId);
-        var result = await _bookService.UpdateAsync(updatedBook);
-        if (!result.Success)
-            return ApiProblemFactory.Result(404, "Book not found");
-
-        return Ok(new { message = result.Message });
+        var result = await _bookService.UpdateAsync(id, request, DateTime.UtcNow, cancellationToken);
+        return result.ErrorCode switch
+        {
+            "book_not_found" => ApiProblemFactory.Result(404, "Book not found"),
+            "isbn_conflict" => BookProblem(409, "ISBN already exists", result.ErrorCode),
+            "inventory_conflict" => BookProblem(409, "Total copies cannot be lower than active physical loans", result.ErrorCode),
+            _ when !result.Success => BookProblem(400, "Book could not be updated", result.ErrorCode),
+            _ => Ok(result.Book)
+        };
     }
 
     [HttpDelete("{id}")]
@@ -100,24 +87,27 @@ public class BooksController : ControllerBase
         if (!result.Success)
             return ApiProblemFactory.Result(404, "Book not found");
 
-        return Ok(new { message = result.Message });
+        return NoContent();
     }
 
-    private static Book MapBook(
-        UpsertBookRequest request,
-        string id,
-        bool isAvailable,
-        string? activeLoanId = null)
+    [HttpPatch("{id}/status")]
+    [Authorize(Policy = PolicyNames.ManageBooks)]
+    public async Task<IActionResult> ChangeStatus(string id, [FromBody] ChangeBookStatusRequest request, CancellationToken cancellationToken)
     {
-        return new Book
-        {
-            Id = id,
-            Title = request.Title,
-            Author = request.Author,
-            Year = request.Year,
-            Genre = request.Genre,
-            IsAvailable = isAvailable,
-            ActiveLoanId = activeLoanId
-        };
+        if (!ObjectId.TryParse(id, out _))
+            return ApiProblemFactory.Result(400, "Invalid book identifier");
+
+        var result = await _bookService.SetActiveAsync(id, request.IsActive, DateTime.UtcNow, cancellationToken);
+        return result.Success
+            ? Ok(new { message = request.IsActive ? "Book activated" : "Book deactivated" })
+            : ApiProblemFactory.Result(404, "Book not found");
+    }
+
+    private static ObjectResult BookProblem(int statusCode, string title, string errorCode)
+    {
+        var result = ApiProblemFactory.Result(statusCode, title);
+        if (result.Value is ProblemDetails problem)
+            problem.Extensions["code"] = errorCode;
+        return result;
     }
 }

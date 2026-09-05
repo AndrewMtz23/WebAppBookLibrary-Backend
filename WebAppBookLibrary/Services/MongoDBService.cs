@@ -52,6 +52,31 @@ namespace WebAppBookLibrary.Services
             };
             await Users.Indexes.CreateManyAsync(userIndexes);
 
+            var bookBuilder = Builders<Book>.IndexKeys;
+            var isbnFilter = Builders<Book>.Filter.And(
+                Builders<Book>.Filter.Exists(book => book.Isbn),
+                Builders<Book>.Filter.Ne(book => book.Isbn, null),
+                Builders<Book>.Filter.Ne(book => book.Isbn, string.Empty));
+            var bookIndexes = new[]
+            {
+                new CreateIndexModel<Book>(
+                    bookBuilder.Ascending(book => book.Isbn),
+                    new CreateIndexOptions<Book> { Name = "ux_books_isbn", Unique = true, PartialFilterExpression = isbnFilter }),
+                new CreateIndexModel<Book>(
+                    bookBuilder.Text(book => book.Title).Text(book => book.Authors),
+                    new CreateIndexOptions { Name = "tx_books_title_authors" }),
+                new CreateIndexModel<Book>(
+                    bookBuilder.Ascending(book => book.IsActive).Ascending(book => book.MediaType),
+                    new CreateIndexOptions { Name = "ix_books_active_media" }),
+                new CreateIndexModel<Book>(
+                    bookBuilder.Ascending(book => book.Genres),
+                    new CreateIndexOptions { Name = "ix_books_genres" }),
+                new CreateIndexModel<Book>(
+                    bookBuilder.Descending(book => book.CreatedAt).Descending(book => book.Id),
+                    new CreateIndexOptions { Name = "ix_books_created_id" })
+            };
+            await Books.Indexes.CreateManyAsync(bookIndexes);
+
             var logBuilder = Builders<LogEntry>.IndexKeys;
             var logIndexes = new[]
             {
