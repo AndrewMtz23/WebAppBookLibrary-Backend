@@ -22,6 +22,7 @@ namespace WebAppBookLibrary.Models
         public DateTime? CancelledAt { get; set; }
         public string CreatedBy { get; set; } = string.Empty;
         public string? Notes { get; set; }
+        public string? ActiveReservationKey { get; set; }
 
         // Legacy fields remain readable until the explicit schema migration is applied.
         public DateTime LoanDate { get; set; } = DateTime.UtcNow;

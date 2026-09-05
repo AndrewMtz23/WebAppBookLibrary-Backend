@@ -23,13 +23,13 @@ public class LoansController : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = PolicyNames.BorrowBooks)]
-    public async Task<IActionResult> CreateLoan([FromBody] CreateLoanRequest request)
+    public async Task<IActionResult> CreateLoan([FromBody] CreateLoanRequest request, CancellationToken cancellationToken)
     {
         if (!ObjectId.TryParse(request.BookId, out _))
             return LoanProblem(400, "Invalid book identifier", "invalid_identifier");
 
         var username = User.Identity?.Name ?? string.Empty;
-        var result = await _loanService.CreateLoanAsync(request.BookId, username);
+        var result = await _loanService.ReserveAsync(request.BookId, username, username, DateTime.UtcNow, cancellationToken);
 
         if (!result.Success)
         {
@@ -37,13 +37,17 @@ public class LoansController : ControllerBase
             {
                 LoanOperationErrorCodes.BookUnavailable =>
                     LoanProblem(409, "Book is not available", result.ErrorCode),
+                LoanOperationErrorCodes.DuplicateActive =>
+                    LoanProblem(409, "An active reservation already exists", result.ErrorCode),
+                LoanOperationErrorCodes.BookNotFound =>
+                    LoanProblem(404, "Book not found", result.ErrorCode),
                 LoanOperationErrorCodes.InvalidUser =>
                     LoanProblem(403, "Loan is not permitted", result.ErrorCode),
                 _ => LoanProblem(500, "Loan could not be created", result.ErrorCode)
             };
         }
 
-        return Ok(new
+        return StatusCode(StatusCodes.Status201Created, new
         {
             message = "Loan created successfully",
             data = result.Loan
@@ -69,14 +73,14 @@ public class LoansController : ControllerBase
     }
 
     [HttpPut("{id}/return")]
-    public async Task<IActionResult> ReturnLoan(string id)
+    public async Task<IActionResult> ReturnLoan(string id, CancellationToken cancellationToken)
     {
         if (!ObjectId.TryParse(id, out _))
             return LoanProblem(400, "Invalid loan identifier", "invalid_identifier");
 
         var username = User.Identity?.Name ?? string.Empty;
         var callerRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
-        var result = await _loanService.MarkAsReturnedAsync(id, username, callerRole);
+        var result = await _loanService.ReturnReservationAsync(id, username, callerRole, DateTime.UtcNow, cancellationToken);
 
         if (!result.Success)
         {
@@ -86,12 +90,36 @@ public class LoansController : ControllerBase
                     LoanProblem(403, "Loan return is not permitted", result.ErrorCode),
                 LoanOperationErrorCodes.LoanNotFound =>
                     LoanProblem(404, "Loan not found", result.ErrorCode),
+                LoanOperationErrorCodes.InvalidTransition =>
+                    LoanProblem(409, "Loan cannot transition to returned", result.ErrorCode),
                 _ => LoanProblem(500, "Loan could not be returned", result.ErrorCode)
             };
         }
 
         var message = result.Idempotent ? "Loan was already returned" : "Loan marked as returned";
         return Ok(new { message, idempotent = result.Idempotent });
+    }
+
+    [HttpPut("{id}/cancel")]
+    public async Task<IActionResult> CancelLoan(string id, CancellationToken cancellationToken)
+    {
+        if (!ObjectId.TryParse(id, out _))
+            return LoanProblem(400, "Invalid loan identifier", "invalid_identifier");
+
+        var username = User.Identity?.Name ?? string.Empty;
+        var callerRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
+        var result = await _loanService.CancelReservationAsync(id, username, callerRole, DateTime.UtcNow, cancellationToken);
+        if (!result.Success)
+        {
+            return result.ErrorCode switch
+            {
+                LoanOperationErrorCodes.Forbidden or LoanOperationErrorCodes.InvalidUser => LoanProblem(403, "Loan cancellation is not permitted", result.ErrorCode),
+                LoanOperationErrorCodes.LoanNotFound => LoanProblem(404, "Loan not found", result.ErrorCode),
+                LoanOperationErrorCodes.InvalidTransition => LoanProblem(409, "Loan cannot transition to cancelled", result.ErrorCode),
+                _ => LoanProblem(500, "Loan could not be cancelled", result.ErrorCode)
+            };
+        }
+        return Ok(new { message = result.Idempotent ? "Loan was already cancelled" : "Loan cancelled", idempotent = result.Idempotent });
     }
 
     [HttpDelete("{id}")]

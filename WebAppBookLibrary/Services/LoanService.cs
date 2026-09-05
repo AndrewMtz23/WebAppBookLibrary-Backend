@@ -1,6 +1,8 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using WebAppBookLibrary.Contracts.Loans;
+using WebAppBookLibrary.Domain.Books;
+using WebAppBookLibrary.Domain.Loans;
 using WebAppBookLibrary.Models;
 using WebAppBookLibrary.Security;
 
@@ -32,6 +34,88 @@ public class LoanService
         _books = dbService.Books;
         _users = dbService.Users;
         _logService = logService;
+    }
+
+    public async Task<LoanOperationResult> ReserveAsync(string bookId, string username, string createdBy, DateTime nowUtc, CancellationToken token)
+    {
+        var user = await _loanStore.FindActiveUserAsync(username);
+        if (user is null) return Failure(LoanOperationErrorCodes.InvalidUser);
+        var book = await _loanStore.FindActiveBookAsync(bookId, token);
+        if (book is null) return Failure(LoanOperationErrorCodes.BookNotFound);
+        if (await _loanStore.HasActiveReservationAsync(user.Id, bookId, token))
+            return Failure(LoanOperationErrorCodes.DuplicateActive);
+
+        var physical = book.MediaType == MediaTypes.Physical;
+        if (physical && !await _loanStore.TryDecrementPhysicalInventoryAsync(bookId, nowUtc, token))
+            return Failure(LoanOperationErrorCodes.BookUnavailable);
+
+        var loan = new Loan
+        {
+            Id = ObjectId.GenerateNewId().ToString(),
+            BookId = bookId,
+            UserId = user.Id,
+            MediaType = book.MediaType,
+            Status = LoanStatuses.Active,
+            ReservedAt = nowUtc,
+            DueAt = physical ? nowUtc.AddDays(14) : null,
+            CreatedBy = string.IsNullOrWhiteSpace(createdBy) ? user.Id : createdBy,
+            LoanDate = nowUtc,
+            IsReturned = false,
+            ActiveReservationKey = $"{user.Id}:{bookId}"
+        };
+
+        try
+        {
+            await _loanStore.InsertLoanAsync(loan, token);
+            return new(true, string.Empty, loan);
+        }
+        catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            if (physical) await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, token);
+            return Failure(LoanOperationErrorCodes.DuplicateActive);
+        }
+        catch
+        {
+            if (physical && !await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, token))
+                return Failure(LoanOperationErrorCodes.ReservationRollbackFailed);
+            return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
+        }
+    }
+
+    public Task<LoanOperationResult> ReturnReservationAsync(string loanId, string username, string callerRole, DateTime nowUtc, CancellationToken token) =>
+        CompleteReservationAsync(loanId, username, callerRole, LoanStatuses.Returned, nowUtc, token);
+
+    public Task<LoanOperationResult> CancelReservationAsync(string loanId, string username, string callerRole, DateTime nowUtc, CancellationToken token) =>
+        CompleteReservationAsync(loanId, username, callerRole, LoanStatuses.Cancelled, nowUtc, token);
+
+    private async Task<LoanOperationResult> CompleteReservationAsync(string loanId, string username, string callerRole, string nextStatus, DateTime nowUtc, CancellationToken token)
+    {
+        if (!IsCanonicalRole(callerRole)) return Failure(LoanOperationErrorCodes.Forbidden);
+        var user = await _loanStore.FindActiveUserAsync(username);
+        if (user is null) return Failure(LoanOperationErrorCodes.InvalidUser);
+        var loan = await _loanStore.FindLoanAsync(loanId, token);
+        if (loan is null) return Failure(LoanOperationErrorCodes.LoanNotFound);
+        if (!CanReturn(loan, user, callerRole)) return Failure(LoanOperationErrorCodes.Forbidden);
+        if (loan.Status == nextStatus) return new(true, string.Empty, loan, true);
+        if (!LoanRules.CanTransition(LoanRules.EffectiveStatus(loan.Status, loan.DueAt, nowUtc), nextStatus))
+            return Failure(LoanOperationErrorCodes.InvalidTransition);
+
+        var transitioned = await _loanStore.TransitionAsync(
+            loanId,
+            [LoanStatuses.Active, LoanStatuses.Overdue],
+            nextStatus,
+            nowUtc,
+            token);
+        if (!transitioned) return Failure(LoanOperationErrorCodes.InvalidTransition);
+        if (loan.MediaType == MediaTypes.Physical &&
+            !await _loanStore.TryIncrementPhysicalInventoryAsync(loan.BookId, nowUtc, token))
+            return Failure(LoanOperationErrorCodes.BookRestoreFailed);
+
+        loan.Status = nextStatus;
+        loan.IsReturned = nextStatus == LoanStatuses.Returned;
+        loan.ReturnedAt = nextStatus == LoanStatuses.Returned ? nowUtc : null;
+        loan.CancelledAt = nextStatus == LoanStatuses.Cancelled ? nowUtc : null;
+        return new(true, string.Empty, loan);
     }
 
     public async Task<LoanOperationResult> CreateLoanAsync(string bookId, string username)

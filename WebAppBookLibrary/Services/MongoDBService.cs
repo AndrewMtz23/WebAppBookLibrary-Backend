@@ -77,6 +77,20 @@ namespace WebAppBookLibrary.Services
             };
             await Books.Indexes.CreateManyAsync(bookIndexes);
 
+            var loanBuilder = Builders<Loan>.IndexKeys;
+            var activeReservationFilter = Builders<Loan>.Filter.And(
+                Builders<Loan>.Filter.Exists(loan => loan.ActiveReservationKey),
+                Builders<Loan>.Filter.Ne(loan => loan.ActiveReservationKey, null));
+            var loanIndexes = new[]
+            {
+                new CreateIndexModel<Loan>(
+                    loanBuilder.Ascending(loan => loan.ActiveReservationKey),
+                    new CreateIndexOptions<Loan> { Name = "ux_loans_active_reservation", Unique = true, PartialFilterExpression = activeReservationFilter }),
+                new CreateIndexModel<Loan>(loanBuilder.Ascending(loan => loan.UserId).Descending(loan => loan.ReservedAt), new CreateIndexOptions { Name = "ix_loans_user_reserved" }),
+                new CreateIndexModel<Loan>(loanBuilder.Ascending(loan => loan.BookId).Ascending(loan => loan.Status), new CreateIndexOptions { Name = "ix_loans_book_status" })
+            };
+            await Loans.Indexes.CreateManyAsync(loanIndexes);
+
             var logBuilder = Builders<LogEntry>.IndexKeys;
             var logIndexes = new[]
             {
