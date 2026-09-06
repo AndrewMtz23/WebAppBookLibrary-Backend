@@ -82,14 +82,18 @@ public class AuthController : ControllerBase
             if (user == null ||
                 !PasswordHasher.VerifyPassword(request.Password, user.PasswordHash) ||
                 !RoleNames.TryNormalize(user.Role, out var role))
+            {
+                await _logService.AuthenticationObservedAsync("failed", request.Username, new Dictionary<string, string> { ["reasonCode"] = "invalid_credentials" });
                 return ApiProblemFactory.Result(401, "Invalid username or password");
+            }
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.Key));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var claims = new[]
             {
-                new Claim(ClaimTypes.Name, request.Username),
+                new Claim(ClaimTypes.Name, user.Username),
+                new Claim(ClaimTypes.NameIdentifier, user.Id),
                 new Claim(ClaimTypes.Role, role)
             };
 
@@ -101,6 +105,7 @@ public class AuthController : ControllerBase
                 signingCredentials: creds);
 
             await _logService.LogAsync("INFORMATION", $"Login exitoso para usuario: {request.Username}");
+            await _logService.AuthenticationObservedAsync("succeeded", user.Id, new Dictionary<string, string> { ["role"] = role });
 
             return Ok(new
             {

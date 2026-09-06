@@ -18,5 +18,12 @@ namespace WebAppBookLibrary.Models
         public string? Controller { get; set; }
         public string? IP { get; set; }
         public string? Method { get; set; }
+        public string? EventType { get; set; }
+        public string? ActorId { get; set; }
+        public string? ActorUsername { get; set; }
+        public string? TargetType { get; set; }
+        public string? TargetId { get; set; }
+        public string? CorrelationId { get; set; }
+        public Dictionary<string, string> Metadata { get; set; } = [];
     }
 }

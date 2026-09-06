@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
-using DotNetEnv;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -23,9 +22,8 @@ public static class Program
 
     public static async Task Main(string[] args)
     {
-        Env.Load();
-
         var builder = WebApplication.CreateBuilder(args);
+        EnvironmentFileLoader.Load(builder.Environment.ContentRootPath);
         MapEnvironmentVariables(builder.Configuration);
 
         var corsOrigin = GetEnvironmentVariable("CORS_ORIGIN") ?? "http://localhost:4200";
@@ -64,6 +62,9 @@ public static class Program
             options.AddPolicy(
                 PolicyNames.ViewAudit,
                 policy => policy.RequireRole(RoleNames.Admin));
+            options.AddPolicy(
+                PolicyNames.ManageUsers,
+                policy => policy.RequireRole(RoleNames.Admin));
         });
     }
 
@@ -88,6 +89,15 @@ public static class Program
         app.UseCors(CorsPolicyName);
         app.UseRateLimiter();
         app.UseAuthentication();
+        app.Use(async (context, next) =>
+        {
+            if (!await CurrentAccountValidator.ValidateAsync(context.User, context.RequestServices.GetRequiredService<IUserStore>()))
+            {
+                await ApiProblemFactory.WriteAsync(context, StatusCodes.Status401Unauthorized, "Session is no longer valid", context.RequestAborted);
+                return;
+            }
+            await next(context);
+        });
 
         if (app.Environment.IsDevelopment())
             app.Use(CreateDevelopmentLoggingMiddleware());
@@ -199,7 +209,14 @@ public static class Program
         services.AddScoped<IUserStore, MongoUserStore>();
         services.AddScoped<ILoanStore, MongoLoanStore>();
         services.AddScoped<UserService>();
+        services.AddScoped<IBookStore, MongoBookStore>();
+        services.AddScoped<IFavoriteStore, MongoFavoriteStore>();
+        services.AddScoped<IAdminUserStore, MongoAdminUserStore>();
+        services.AddScoped<IDashboardStore, MongoDashboardStore>();
         services.AddScoped<BookService>();
+        services.AddScoped<FavoriteService>();
+        services.AddScoped<AdminUserService>();
+        services.AddScoped<DashboardService>();
         services.AddScoped<LoanService>();
         services.AddScoped<Logservice>();
 

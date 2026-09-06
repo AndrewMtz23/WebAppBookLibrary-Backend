@@ -20,7 +20,7 @@ public class BooksControllerValidationTests
     public async Task Update_rejects_invalid_object_id_before_Mongo()
     {
         var controller = new BooksController(null!, null!);
-        var request = new UpsertBookRequest
+        var request = new BookWriteRequest
         {
             Title = "Title",
             Author = "Author"

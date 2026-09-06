@@ -1,6 +1,55 @@
-@WebAppBookLibrary_HostAddress = http://localhost:5232
+@host = https://localhost:7086
+@token = replace-with-jwt
+@bookId = 507f1f77bcf86cd799439011
+@loanId = 507f1f77bcf86cd799439012
+@userId = 507f1f77bcf86cd799439013
 
-GET {{WebAppBookLibrary_HostAddress}}/weatherforecast/
-Accept: application/json
+GET {{host}}/api/health
 
 ###
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{"username":"reader","password":"replace-me"}
+
+###
+GET {{host}}/api/books?page=1&pageSize=20&mediaType=physical&available=true&sort=createdAt&direction=desc
+Authorization: Bearer {{token}}
+
+###
+POST {{host}}/api/loans
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"bookId":"{{bookId}}"}
+
+###
+GET {{host}}/api/loans/my?page=1&pageSize=20&status=active
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/books/{{bookId}}/digital-access
+Authorization: Bearer {{token}}
+
+###
+PUT {{host}}/api/loans/{{loanId}}/return
+Authorization: Bearer {{token}}
+
+###
+POST {{host}}/api/favorites/{{bookId}}
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/favorites?page=1&pageSize=20
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/dashboard/reader?from=2026-09-01&to=2026-09-30&timezone=UTC
+Authorization: Bearer {{token}}
+
+###
+PUT {{host}}/api/admin/users/{{userId}}/role
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{"role":"librarian"}

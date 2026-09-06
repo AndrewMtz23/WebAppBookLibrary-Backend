@@ -17,4 +17,7 @@ public static class LoanOperationErrorCodes
     public const string BookRestoreFailed = "book_restore_failed";
     public const string LoanNotFound = "loan_not_found";
     public const string Forbidden = "forbidden";
+    public const string BookNotFound = "book_not_found";
+    public const string DuplicateActive = "duplicate_active_reservation";
+    public const string InvalidTransition = "invalid_transition";
 }

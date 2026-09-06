@@ -17,4 +17,15 @@ public sealed class UpsertBookRequest
 
     [StringLength(100)]
     public string Genre { get; init; } = string.Empty;
+
+    public BookWriteRequest ToBookWriteRequest() => new()
+    {
+        Title = Title,
+        Authors = [Author],
+        Description = "Sin descripción disponible para este registro heredado.",
+        PublishedDate = Year is null ? null : new DateOnly(Year.Value, 1, 1),
+        Genres = string.IsNullOrWhiteSpace(Genre) ? ["Sin clasificar"] : [Genre],
+        MediaType = Domain.Books.MediaTypes.Physical,
+        TotalCopies = 1
+    };
 }

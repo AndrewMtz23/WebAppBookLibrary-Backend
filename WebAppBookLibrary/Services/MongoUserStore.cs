@@ -14,13 +14,16 @@ public sealed class MongoUserStore : IUserStore
 
     public async Task<User?> FindByUsernameAsync(string username)
     {
-        User? user = await _users.Find(user => user.Username == username).FirstOrDefaultAsync();
+        var normalized = username.Trim().ToUpperInvariant();
+        User? user = await _users.Find(user => user.NormalizedUsername == normalized || user.Username == username).FirstOrDefaultAsync();
         return user;
     }
 
     public async Task<User?> FindByUsernameOrEmailAsync(string username, string email)
     {
-        User? user = await _users.Find(user => user.Username == username || user.Email == email)
+        var normalizedUsername = username.Trim().ToUpperInvariant();
+        var normalizedEmail = email.Trim().ToUpperInvariant();
+        User? user = await _users.Find(user => user.NormalizedUsername == normalizedUsername || user.NormalizedEmail == normalizedEmail || user.Username == username || user.Email == email)
             .FirstOrDefaultAsync();
         return user;
     }

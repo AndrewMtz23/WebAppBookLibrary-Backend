@@ -1,9 +1,21 @@
 using WebAppBookLibrary.Models;
+using WebAppBookLibrary.Contracts.Loans;
+using WebAppBookLibrary.Domain.Common;
 
 namespace WebAppBookLibrary.Services;
 
 public interface ILoanStore
 {
+    Task<Book?> FindActiveBookAsync(string bookId, CancellationToken cancellationToken);
+    Task<bool> HasActiveReservationAsync(string userId, string bookId, CancellationToken cancellationToken);
+    Task<bool> TryDecrementPhysicalInventoryAsync(string bookId, DateTime updatedAtUtc, CancellationToken cancellationToken);
+    Task<bool> TryIncrementPhysicalInventoryAsync(string bookId, DateTime updatedAtUtc, CancellationToken cancellationToken);
+    Task InsertLoanAsync(Loan loan, CancellationToken cancellationToken);
+    Task<Loan?> FindLoanAsync(string loanId, CancellationToken cancellationToken);
+    Task<bool> TransitionAsync(string loanId, IReadOnlyCollection<string> allowedStatuses, string nextStatus, DateTime changedAtUtc, CancellationToken cancellationToken);
+    Task<bool> CompletePhysicalAsync(string loanId, string bookId, string nextStatus, DateTime changedAtUtc, CancellationToken cancellationToken);
+    Task<PagedResult<Loan>> SearchAsync(NormalizedLoanQuery query, CancellationToken cancellationToken);
+
     Task<Book?> ReserveAvailableBookAsync(string bookId, string loanId);
 
     Task<bool> RestoreBookAvailabilityAsync(

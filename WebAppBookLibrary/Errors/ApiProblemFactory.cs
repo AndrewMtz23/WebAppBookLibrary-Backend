@@ -31,6 +31,14 @@ public static class ApiProblemFactory
         };
     }
 
+    public static ProblemDetails Create(HttpContext context, int statusCode, string title)
+    {
+        var problem = Create(statusCode, title);
+        problem.Instance = context.Request.Path;
+        problem.Extensions["traceId"] = context.TraceIdentifier;
+        return problem;
+    }
+
     public static async Task WriteAsync(
         HttpContext context,
         int statusCode,
@@ -41,7 +49,7 @@ public static class ApiProblemFactory
         context.Response.ContentType = "application/problem+json";
         await JsonSerializer.SerializeAsync(
             context.Response.Body,
-            Create(statusCode, title),
+            Create(context, statusCode, title),
             JsonOptions,
             cancellationToken);
     }

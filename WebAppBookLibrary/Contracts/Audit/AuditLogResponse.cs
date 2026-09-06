@@ -11,7 +11,14 @@ public sealed record AuditLogResponse(
     string? Action,
     string? Controller,
     string? IP,
-    string? Method)
+    string? Method,
+    string? EventType,
+    string? ActorId,
+    string? ActorUsername,
+    string? TargetType,
+    string? TargetId,
+    string? CorrelationId,
+    IReadOnlyDictionary<string, string> Metadata)
 {
     public static AuditLogResponse From(LogEntry entry)
     {
@@ -23,8 +30,15 @@ public sealed record AuditLogResponse(
             entry.Username,
             entry.Action,
             entry.Controller,
-            entry.IP,
-            entry.Method);
+            MaskIp(entry.IP),
+            entry.Method,
+            entry.EventType,
+            entry.ActorId,
+            entry.ActorUsername,
+            entry.TargetType,
+            entry.TargetId,
+            entry.CorrelationId,
+            entry.Metadata);
     }
 
     private static string SanitizeLegacyMessage(LogEntry entry)
@@ -44,5 +58,14 @@ public sealed record AuditLogResponse(
 
         var exceptionMessage = firstLine[(separatorIndex + 2)..];
         return entry.Message.Replace(exceptionMessage, "[redacted]", StringComparison.Ordinal);
+    }
+
+    private static string? MaskIp(string? value)
+    {
+        if (!System.Net.IPAddress.TryParse(value, out var address)) return null;
+        var bytes = address.GetAddressBytes();
+        if (bytes.Length == 4) bytes[3] = 0;
+        else for (var index = 8; index < bytes.Length; index++) bytes[index] = 0;
+        return new System.Net.IPAddress(bytes).ToString();
     }
 }
