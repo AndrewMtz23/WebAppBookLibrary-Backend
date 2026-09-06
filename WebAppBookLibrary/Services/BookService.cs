@@ -20,6 +20,7 @@ public sealed class BookService
     }
 
     public Task<PagedResult<BookSummaryResponse>> SearchAsync(BookQuery query, bool includeInactive, CancellationToken token) => SearchAsync(query, includeInactive, null, token);
+    public Task<IReadOnlyList<BookFacetResponse>> GetGenreFacetsAsync(CancellationToken token) => _store.GetGenreFacetsAsync(token);
     public async Task<List<Book>> GetAllAsync() => (await _store.SearchAsync(new BookQuery { PageSize = 100 }.Normalize(), true, null, CancellationToken.None)).Items.Select(item => item.Book).ToList();
     public Task<Book?> GetByIdAsync(string id) => _store.FindByIdAsync(id, CancellationToken.None);
 

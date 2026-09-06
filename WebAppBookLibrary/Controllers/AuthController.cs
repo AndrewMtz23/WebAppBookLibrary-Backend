@@ -104,6 +104,8 @@ public class AuthController : ControllerBase
                 expires: DateTime.UtcNow.AddHours(1),
                 signingCredentials: creds);
 
+            await _userService.TouchLastLoginAsync(user.Id, DateTime.UtcNow, HttpContext.RequestAborted);
+
             await _logService.LogAsync("INFORMATION", $"Login exitoso para usuario: {request.Username}");
             await _logService.AuthenticationObservedAsync("succeeded", user.Id, new Dictionary<string, string> { ["role"] = role });
 

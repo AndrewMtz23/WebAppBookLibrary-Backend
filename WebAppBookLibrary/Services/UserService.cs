@@ -20,6 +20,9 @@ public sealed class UserService
         return user?.IsActive == true ? user : null;
     }
 
+    public Task TouchLastLoginAsync(string userId, DateTime occurredAtUtc, CancellationToken cancellationToken) =>
+        _userStore.TouchLastLoginAsync(userId, occurredAtUtc, cancellationToken);
+
     public async Task<UserCreationResult> CreateUserAsync(RegisterRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Username) ||

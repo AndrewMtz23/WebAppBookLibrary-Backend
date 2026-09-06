@@ -30,6 +30,12 @@ public class BooksController : ControllerBase
         return Ok(page);
     }
 
+    [HttpGet("facets")]
+    public async Task<IActionResult> GetFacets(CancellationToken cancellationToken)
+    {
+        return Ok(await _bookService.GetGenreFacetsAsync(cancellationToken));
+    }
+
     [HttpGet("{id}")]
     public async Task<IActionResult> GetById(string id, CancellationToken cancellationToken = default)
     {
