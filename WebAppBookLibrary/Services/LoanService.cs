@@ -47,12 +47,19 @@ public class LoanService
             return Failure(LoanOperationErrorCodes.DuplicateActive);
 
         var physical = book.MediaType == MediaTypes.Physical;
-        if (physical && !await _loanStore.TryDecrementPhysicalInventoryAsync(bookId, nowUtc, token))
-            return Failure(LoanOperationErrorCodes.BookUnavailable);
+        var legacyPhysical = physical && (book.TotalCopies is null || book.AvailableCopies is null);
+        var loanId = ObjectId.GenerateNewId().ToString();
+        if (physical)
+        {
+            var inventoryReserved = legacyPhysical
+                ? await _loanStore.ReserveAvailableBookAsync(bookId, loanId) is not null
+                : await _loanStore.TryDecrementPhysicalInventoryAsync(bookId, nowUtc, token);
+            if (!inventoryReserved) return Failure(LoanOperationErrorCodes.BookUnavailable);
+        }
 
         var loan = new Loan
         {
-            Id = ObjectId.GenerateNewId().ToString(),
+            Id = loanId,
             BookId = bookId,
             UserId = user.Id,
             MediaType = book.MediaType,
@@ -72,12 +79,13 @@ public class LoanService
         }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            if (physical) await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, CancellationToken.None);
+            if (physical && !await RollbackInventoryAsync(bookId, loanId, legacyPhysical, nowUtc))
+                return Failure(LoanOperationErrorCodes.ReservationRollbackFailed);
             return Failure(LoanOperationErrorCodes.DuplicateActive);
         }
         catch
         {
-            if (physical && !await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, CancellationToken.None))
+            if (physical && !await RollbackInventoryAsync(bookId, loanId, legacyPhysical, nowUtc))
                 return Failure(LoanOperationErrorCodes.ReservationRollbackFailed);
             return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
         }
@@ -419,6 +427,20 @@ public class LoanService
         catch
         {
             // Logging failure must not hide the stable consistency error result.
+        }
+    }
+
+    private async Task<bool> RollbackInventoryAsync(string bookId, string loanId, bool legacyPhysical, DateTime nowUtc)
+    {
+        try
+        {
+            return legacyPhysical
+                ? await _loanStore.RestoreBookAvailabilityAsync(bookId, loanId, allowLegacyUncorrelated: false)
+                : await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, CancellationToken.None);
+        }
+        catch
+        {
+            return false;
         }
     }
 

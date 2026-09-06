@@ -57,12 +57,14 @@ Never commit `.env`. For production, inject secrets through the hosting platform
 | `PATCH` | `/api/books/{id}/status` | Librarian or admin |
 | `DELETE` | `/api/books/{id}` | Admin; compatibility alias for logical deactivation |
 | `POST` | `/api/loans` | User |
-| `GET` | `/api/loans/my` | User |
-| `GET` | `/api/loans` | Librarian or admin |
+| `GET` | `/api/loans/my?page=&pageSize=&status=&mediaType=` | User |
+| `GET` | `/api/loans?page=&pageSize=&status=&mediaType=&userId=&bookId=` | Librarian or admin |
+| `GET` | `/api/books/{id}/digital-access` | User with an active digital reservation |
 | `PUT` | `/api/loans/{id}/return` | Owner, librarian, or admin |
 | `PUT` | `/api/loans/{id}/cancel` | Owner, librarian, or admin |
 | `DELETE` | `/api/loans/{id}` | Admin |
-| `GET`, `POST`, `DELETE` | `/api/favorites[/{bookId}]` | User |
+| `GET` | `/api/favorites?page=&pageSize=` | User |
+| `POST`, `DELETE` | `/api/favorites/{bookId}` | User |
 | `GET` | `/api/admin/users`, `/api/admin/users/{id}` | Admin |
 | `PUT` | `/api/admin/users/{id}/role`, `/api/admin/users/{id}/status` | Admin |
 | `GET` | `/api/dashboard/reader` | User |

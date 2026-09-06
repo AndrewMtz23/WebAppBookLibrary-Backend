@@ -75,7 +75,9 @@ public sealed class MongoBookStore : IBookStore
     }
     public async Task<bool> ReplaceMetadataAsync(Book book, DateTime expectedUpdatedAt, CancellationToken cancellationToken)
     {
-        var filter = Builders<Book>.Filter.Eq(item => item.Id, book.Id) & Builders<Book>.Filter.Eq(item => item.UpdatedAt, expectedUpdatedAt);
+        var version = Builders<Book>.Filter.Eq(item => item.UpdatedAt, expectedUpdatedAt) |
+                      Builders<Book>.Filter.Exists(item => item.UpdatedAt, false);
+        var filter = Builders<Book>.Filter.Eq(item => item.Id, book.Id) & version;
         return (await _books.ReplaceOneAsync(filter, book, cancellationToken: cancellationToken)).MatchedCount == 1;
     }
     public async Task<bool> SetActiveAsync(string id, bool active, DateTime updated, CancellationToken token) => (await _books.UpdateOneAsync(book => book.Id == id, Builders<Book>.Update.Set(book => book.IsActive, active).Set(book => book.UpdatedAt, updated), cancellationToken: token)).MatchedCount == 1;

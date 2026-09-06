@@ -24,11 +24,23 @@ Content-Type: application/json
 {"bookId":"{{bookId}}"}
 
 ###
+GET {{host}}/api/loans/my?page=1&pageSize=20&status=active
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/books/{{bookId}}/digital-access
+Authorization: Bearer {{token}}
+
+###
 PUT {{host}}/api/loans/{{loanId}}/return
 Authorization: Bearer {{token}}
 
 ###
 POST {{host}}/api/favorites/{{bookId}}
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/favorites?page=1&pageSize=20
 Authorization: Bearer {{token}}
 
 ###

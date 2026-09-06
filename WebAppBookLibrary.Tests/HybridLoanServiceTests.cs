@@ -41,6 +41,24 @@ public sealed class HybridLoanServiceTests
     }
 
     [Fact]
+    public async Task ReserveAsync_LegacyPhysicalBookUsesAtomicLegacyAvailability()
+    {
+        var book = Book(MediaTypes.Physical);
+        book.TotalCopies = null;
+        book.AvailableCopies = null;
+        book.IsAvailable = true;
+        var store = StoreFor(book);
+        store.Setup(x => x.ReserveAvailableBookAsync("b1", It.IsAny<string>())).ReturnsAsync(book);
+        var service = new LoanService(store.Object);
+
+        var result = await service.ReserveAsync("b1", "ana", "u1", Now, CancellationToken.None);
+
+        Assert.True(result.Success);
+        store.Verify(x => x.ReserveAvailableBookAsync("b1", result.Loan!.Id), Times.Once);
+        store.Verify(x => x.TryDecrementPhysicalInventoryAsync(It.IsAny<string>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ReserveAsync_RejectsDuplicateActiveReservation()
     {
         var store = StoreFor(Book(MediaTypes.Digital));
