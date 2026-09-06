@@ -28,7 +28,9 @@ public sealed class MongoDashboardStore(MongoDBService database) : IDashboardSto
         var filter = PeriodFilter(period);
         var total = await _loans.CountDocumentsAsync(filter, cancellationToken: token);
         var active = await _loans.CountDocumentsAsync(filter & Builders<Loan>.Filter.In(loan => loan.Status, [LoanStatuses.Active, LoanStatuses.Overdue]), cancellationToken: token);
-        var overdue = await _loans.CountDocumentsAsync(filter & Builders<Loan>.Filter.Eq(loan => loan.Status, LoanStatuses.Overdue), cancellationToken: token);
+        var overdueFilter = Builders<Loan>.Filter.Eq(loan => loan.Status, LoanStatuses.Overdue) |
+                            (Builders<Loan>.Filter.Eq(loan => loan.Status, LoanStatuses.Active) & Builders<Loan>.Filter.Lt(loan => loan.DueAt, period.GeneratedAt));
+        var overdue = await _loans.CountDocumentsAsync(filter & overdueFilter, cancellationToken: token);
         var activeBooks = await _books.CountDocumentsAsync(book => book.IsActive, cancellationToken: token);
         var physical = await _books.Find(book => book.IsActive && book.MediaType == Domain.Books.MediaTypes.Physical).Project(book => book.AvailableCopies).ToListAsync(token);
         return new(period.GeneratedAt, period.FromUtc, period.ToUtc, total, active, overdue, activeBooks, physical.Sum(value => value ?? 0), await GroupLoansByMedia(filter, token));

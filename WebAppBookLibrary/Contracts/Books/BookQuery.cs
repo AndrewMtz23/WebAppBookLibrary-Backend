@@ -4,7 +4,7 @@ namespace WebAppBookLibrary.Contracts.Books;
 
 public sealed class BookQuery
 {
-    private static readonly HashSet<string> AllowedSorts = new(StringComparer.OrdinalIgnoreCase) { "createdAt", "title", "publishedDate", "reservationCount" };
+    private static readonly HashSet<string> AllowedSorts = new(StringComparer.OrdinalIgnoreCase) { "createdAt", "title", "publishedDate" };
     public string? Query { get; init; }
     public string? Genre { get; init; }
     public string? MediaType { get; init; }

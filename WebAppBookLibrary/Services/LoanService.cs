@@ -3,6 +3,7 @@ using MongoDB.Driver;
 using WebAppBookLibrary.Contracts.Loans;
 using WebAppBookLibrary.Domain.Books;
 using WebAppBookLibrary.Domain.Loans;
+using WebAppBookLibrary.Domain.Common;
 using WebAppBookLibrary.Models;
 using WebAppBookLibrary.Security;
 
@@ -71,12 +72,12 @@ public class LoanService
         }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            if (physical) await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, token);
+            if (physical) await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, CancellationToken.None);
             return Failure(LoanOperationErrorCodes.DuplicateActive);
         }
         catch
         {
-            if (physical && !await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, token))
+            if (physical && !await _loanStore.TryIncrementPhysicalInventoryAsync(bookId, nowUtc, CancellationToken.None))
                 return Failure(LoanOperationErrorCodes.ReservationRollbackFailed);
             return Failure(LoanOperationErrorCodes.LoanPersistenceFailed);
         }
@@ -87,6 +88,33 @@ public class LoanService
 
     public Task<LoanOperationResult> CancelReservationAsync(string loanId, string username, string callerRole, DateTime nowUtc, CancellationToken token) =>
         CompleteReservationAsync(loanId, username, callerRole, LoanStatuses.Cancelled, nowUtc, token);
+
+    public async Task<DigitalAccessResult> GetDigitalAccessAsync(string bookId, string username, CancellationToken token)
+    {
+        var user = await _loanStore.FindActiveUserAsync(username);
+        if (user is null) return new(false, LoanOperationErrorCodes.InvalidUser);
+        var book = await _loanStore.FindActiveBookAsync(bookId, token);
+        if (book is null || book.MediaType != MediaTypes.Digital || string.IsNullOrWhiteSpace(book.DigitalResourceUrl))
+            return new(false, LoanOperationErrorCodes.BookNotFound);
+        if (!await _loanStore.HasActiveReservationAsync(user.Id, bookId, token))
+            return new(false, LoanOperationErrorCodes.Forbidden);
+        return new(true, string.Empty, book.DigitalResourceUrl);
+    }
+
+    public async Task<PagedResult<LoanResponse>> SearchAsync(LoanQuery query, CancellationToken token)
+    {
+        var page = await _loanStore.SearchAsync(query.Normalize(), token);
+        return new(page.Items.Select(item => LoanResponse.From(item, DateTime.UtcNow)).ToArray(), page.Page, page.PageSize, page.TotalItems);
+    }
+
+    public async Task<PagedResult<LoanResponse>?> SearchMineAsync(string username, LoanQuery query, CancellationToken token)
+    {
+        var user = await _loanStore.FindActiveUserAsync(username);
+        if (user is null) return null;
+        var normalized = query.Normalize() with { UserId = user.Id };
+        var page = await _loanStore.SearchAsync(normalized, token);
+        return new(page.Items.Select(item => LoanResponse.From(item, DateTime.UtcNow)).ToArray(), page.Page, page.PageSize, page.TotalItems);
+    }
 
     private async Task<LoanOperationResult> CompleteReservationAsync(string loanId, string username, string callerRole, string nextStatus, DateTime nowUtc, CancellationToken token)
     {
@@ -100,16 +128,18 @@ public class LoanService
         if (!LoanRules.CanTransition(LoanRules.EffectiveStatus(loan.Status, loan.DueAt, nowUtc), nextStatus))
             return Failure(LoanOperationErrorCodes.InvalidTransition);
 
-        var transitioned = await _loanStore.TransitionAsync(
-            loanId,
-            [LoanStatuses.Active, LoanStatuses.Overdue],
-            nextStatus,
-            nowUtc,
-            token);
-        if (!transitioned) return Failure(LoanOperationErrorCodes.InvalidTransition);
-        if (loan.MediaType == MediaTypes.Physical &&
-            !await _loanStore.TryIncrementPhysicalInventoryAsync(loan.BookId, nowUtc, token))
-            return Failure(LoanOperationErrorCodes.BookRestoreFailed);
+        var isPhysical = string.IsNullOrWhiteSpace(loan.MediaType) || loan.MediaType == MediaTypes.Physical;
+        var transitioned = isPhysical
+            ? await _loanStore.CompletePhysicalAsync(loanId, loan.BookId, nextStatus, nowUtc, token)
+            : await _loanStore.TransitionAsync(loanId, [LoanStatuses.Active, LoanStatuses.Overdue], nextStatus, nowUtc, token);
+        if (!transitioned)
+        {
+            var current = await _loanStore.FindLoanAsync(loanId, CancellationToken.None);
+            if (current?.Status == nextStatus) return new(true, string.Empty, current, true);
+            return isPhysical
+                ? Failure(LoanOperationErrorCodes.BookRestoreFailed)
+                : Failure(LoanOperationErrorCodes.InvalidTransition);
+        }
 
         loan.Status = nextStatus;
         loan.IsReturned = nextStatus == LoanStatuses.Returned;
@@ -183,22 +213,17 @@ public class LoanService
             foreach (var loan in loans)
             {
                 var book = await _books.Find(b => b.Id == loan.BookId).FirstOrDefaultAsync();
-                var dueDate = loan.LoanDate.AddDays(14);
-
-                var status = "active";
-                if (loan.IsReturned)
-                    status = "returned";
-                else if (DateTime.UtcNow > dueDate)
-                    status = "overdue";
+                var projection = LoanResponse.From(loan, DateTime.UtcNow);
 
                 result.Add(new
                 {
                     id = loan.Id,
                     bookTitle = book?.Title ?? "N/A",
-                    loanDate = loan.LoanDate,
-                    dueDate,
-                    returnDate = loan.ReturnDate,
-                    status
+                    loanDate = projection.ReservedAt,
+                    dueDate = projection.DueAt,
+                    returnDate = projection.ReturnedAt,
+                    status = projection.Status,
+                    mediaType = projection.MediaType
                 });
             }
 
@@ -235,13 +260,7 @@ public class LoanService
             {
                 var book = await _books.Find(b => b.Id == loan.BookId).FirstOrDefaultAsync();
                 var user = await _users.Find(u => u.Id == loan.UserId).FirstOrDefaultAsync();
-                var dueDate = loan.LoanDate.AddDays(14);
-
-                var status = "active";
-                if (loan.IsReturned)
-                    status = "returned";
-                else if (DateTime.UtcNow > dueDate)
-                    status = "overdue";
+                var projection = LoanResponse.From(loan, DateTime.UtcNow);
 
                 result.Add(new
                 {
@@ -252,11 +271,12 @@ public class LoanService
                     userId = loan.UserId,
                     username = user?.Username ?? "N/A",
                     userEmail = user?.Email ?? "N/A",
-                    loanDate = loan.LoanDate,
-                    dueDate,
-                    returnDate = loan.ReturnDate,
-                    status,
-                    isOverdue = DateTime.UtcNow > dueDate && !loan.IsReturned
+                    loanDate = projection.ReservedAt,
+                    dueDate = projection.DueAt,
+                    returnDate = projection.ReturnedAt,
+                    status = projection.Status,
+                    mediaType = projection.MediaType,
+                    isOverdue = projection.Status == LoanStatuses.Overdue
                 });
             }
 

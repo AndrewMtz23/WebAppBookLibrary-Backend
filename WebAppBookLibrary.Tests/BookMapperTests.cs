@@ -71,4 +71,16 @@ public sealed class BookMapperTests
         Assert.Equal(DateTimeKind.Utc, book.CreatedAt.Kind);
         Assert.Equal(local.ToUniversalTime(), book.CreatedAt);
     }
+
+    [Fact]
+    public void ToSummary_ProjectsLegacyAuthorGenreAndAvailability()
+    {
+        var legacy = new WebAppBookLibrary.Models.Book { Id = "b1", Title = "Legacy", Author = "Author", Genre = "Novel", IsAvailable = true };
+
+        var response = BookMapper.ToSummary(legacy, 0, false);
+
+        Assert.Equal(["Author"], response.Authors);
+        Assert.Equal(["Novel"], response.Genres);
+        Assert.Equal(1, response.AvailableCopies);
+    }
 }

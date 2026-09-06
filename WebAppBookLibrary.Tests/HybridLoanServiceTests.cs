@@ -60,15 +60,14 @@ public sealed class HybridLoanServiceTests
         var loan = ActiveLoan(MediaTypes.Physical);
         var store = new Mock<ILoanStore>();
         store.Setup(x => x.FindLoanAsync("l1", It.IsAny<CancellationToken>())).ReturnsAsync(loan);
-        store.Setup(x => x.TransitionAsync("l1", It.IsAny<IReadOnlyCollection<string>>(), LoanStatuses.Returned, Now, It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        store.Setup(x => x.TryIncrementPhysicalInventoryAsync("b1", Now, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        store.Setup(x => x.CompletePhysicalAsync("l1", "b1", LoanStatuses.Returned, Now, It.IsAny<CancellationToken>())).ReturnsAsync(true);
         var service = new LoanService(store.Object);
 
         store.Setup(x => x.FindActiveUserAsync("ana")).ReturnsAsync(new User { Id = "u1", Username = "ana", IsActive = true });
         var result = await service.ReturnReservationAsync("l1", "ana", RoleNames.User, Now, CancellationToken.None);
 
         Assert.True(result.Success);
-        store.Verify(x => x.TryIncrementPhysicalInventoryAsync("b1", Now, It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(x => x.CompletePhysicalAsync("l1", "b1", LoanStatuses.Returned, Now, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -103,6 +102,22 @@ public sealed class HybridLoanServiceTests
 
         Assert.False(result.Success);
         Assert.Equal(LoanOperationErrorCodes.InvalidTransition, result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task GetDigitalAccessAsync_RequiresActiveReservation()
+    {
+        var book = Book(MediaTypes.Digital);
+        book.DigitalResourceUrl = "https://cdn.example/private.pdf";
+        var store = StoreFor(book);
+        store.Setup(x => x.HasActiveReservationAsync("u1", "b1", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var service = new LoanService(store.Object);
+
+        var result = await service.GetDigitalAccessAsync("b1", "ana", CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal(LoanOperationErrorCodes.Forbidden, result.ErrorCode);
+        Assert.Null(result.ResourceUrl);
     }
 
     private static Mock<ILoanStore> StoreFor(Book book)

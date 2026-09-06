@@ -15,10 +15,17 @@ namespace WebAppBookLibrary.Controllers;
 public class LoansController : ControllerBase
 {
     private readonly LoanService _loanService;
+    private readonly Logservice? _logService;
 
     public LoansController(LoanService loanService)
+        : this(loanService, null)
+    {
+    }
+
+    public LoansController(LoanService loanService, Logservice? logService)
     {
         _loanService = loanService;
+        _logService = logService;
     }
 
     [HttpPost]
@@ -47,29 +54,28 @@ public class LoansController : ControllerBase
             };
         }
 
+        if (_logService is not null) await _logService.LoanChangedAsync("created", username, result.Loan!.Id, new Dictionary<string, string> { ["mediaType"] = result.Loan.MediaType });
         return StatusCode(StatusCodes.Status201Created, new
         {
             message = "Loan created successfully",
-            data = result.Loan
+            data = LoanResponse.From(result.Loan!, DateTime.UtcNow)
         });
     }
 
     [HttpGet("my")]
     [Authorize(Policy = PolicyNames.BorrowBooks)]
-    public async Task<IActionResult> GetMyLoans()
+    public async Task<IActionResult> GetMyLoans([FromQuery] LoanQuery query, CancellationToken token)
     {
         var username = User.Identity?.Name ?? string.Empty;
-        var loans = await _loanService.GetLoansByUsernameAsync(username);
-
-        return Ok(new { message = "My loans retrieved", data = loans });
+        var loans = await _loanService.SearchMineAsync(username, query, token);
+        return loans is null ? LoanProblem(403, "Loans are not permitted", LoanOperationErrorCodes.InvalidUser) : Ok(loans);
     }
 
     [HttpGet]
     [Authorize(Policy = PolicyNames.ViewAllLoans)]
-    public async Task<IActionResult> GetAllLoans()
+    public async Task<IActionResult> GetAllLoans([FromQuery] LoanQuery query, CancellationToken token)
     {
-        var loans = await _loanService.GetAllLoansWithDetailsAsync();
-        return Ok(new { message = "All loans retrieved", data = loans });
+        return Ok(await _loanService.SearchAsync(query, token));
     }
 
     [HttpPut("{id}/return")]
@@ -97,6 +103,7 @@ public class LoansController : ControllerBase
         }
 
         var message = result.Idempotent ? "Loan was already returned" : "Loan marked as returned";
+        if (!result.Idempotent && _logService is not null) await _logService.LoanChangedAsync("returned", username, id);
         return Ok(new { message, idempotent = result.Idempotent });
     }
 
@@ -119,6 +126,7 @@ public class LoansController : ControllerBase
                 _ => LoanProblem(500, "Loan could not be cancelled", result.ErrorCode)
             };
         }
+        if (!result.Idempotent && _logService is not null) await _logService.LoanChangedAsync("cancelled", username, id);
         return Ok(new { message = result.Idempotent ? "Loan was already cancelled" : "Loan cancelled", idempotent = result.Idempotent });
     }
 

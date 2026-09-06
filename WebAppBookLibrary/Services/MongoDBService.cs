@@ -49,7 +49,10 @@ namespace WebAppBookLibrary.Services
             var userIndexes = new[]
             {
                 new CreateIndexModel<User>(userBuilder.Ascending(u => u.Username), new CreateIndexOptions { Unique = true }),
-                new CreateIndexModel<User>(userBuilder.Ascending(u => u.Email), new CreateIndexOptions { Unique = true })
+                new CreateIndexModel<User>(userBuilder.Ascending(u => u.Email), new CreateIndexOptions { Unique = true }),
+                new CreateIndexModel<User>(userBuilder.Ascending(u => u.NormalizedUsername), new CreateIndexOptions<User> { Name = "ux_users_normalized_username", Unique = true, PartialFilterExpression = Builders<User>.Filter.Ne(u => u.NormalizedUsername, string.Empty) }),
+                new CreateIndexModel<User>(userBuilder.Ascending(u => u.NormalizedEmail), new CreateIndexOptions<User> { Name = "ux_users_normalized_email", Unique = true, PartialFilterExpression = Builders<User>.Filter.Ne(u => u.NormalizedEmail, string.Empty) }),
+                new CreateIndexModel<User>(userBuilder.Ascending(u => u.Role).Ascending(u => u.IsActive), new CreateIndexOptions { Name = "ix_users_role_active" })
             };
             await Users.Indexes.CreateManyAsync(userIndexes);
 
@@ -88,7 +91,9 @@ namespace WebAppBookLibrary.Services
                     loanBuilder.Ascending(loan => loan.ActiveReservationKey),
                     new CreateIndexOptions<Loan> { Name = "ux_loans_active_reservation", Unique = true, PartialFilterExpression = activeReservationFilter }),
                 new CreateIndexModel<Loan>(loanBuilder.Ascending(loan => loan.UserId).Descending(loan => loan.ReservedAt), new CreateIndexOptions { Name = "ix_loans_user_reserved" }),
-                new CreateIndexModel<Loan>(loanBuilder.Ascending(loan => loan.BookId).Ascending(loan => loan.Status), new CreateIndexOptions { Name = "ix_loans_book_status" })
+                new CreateIndexModel<Loan>(loanBuilder.Ascending(loan => loan.UserId).Ascending(loan => loan.Status).Descending(loan => loan.ReservedAt), new CreateIndexOptions { Name = "ix_loans_user_status_reserved" }),
+                new CreateIndexModel<Loan>(loanBuilder.Ascending(loan => loan.BookId).Ascending(loan => loan.Status), new CreateIndexOptions { Name = "ix_loans_book_status" }),
+                new CreateIndexModel<Loan>(loanBuilder.Ascending(loan => loan.MediaType).Ascending(loan => loan.Status).Ascending(loan => loan.DueAt), new CreateIndexOptions { Name = "ix_loans_media_status_due" })
             };
             await Loans.Indexes.CreateManyAsync(loanIndexes);
 

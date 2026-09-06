@@ -14,9 +14,9 @@ namespace WebAppBookLibrary.Models
         public string BookId { get; set; } = string.Empty;
         public string UserId { get; set; } = string.Empty;
 
-        public string MediaType { get; set; } = MediaTypes.Physical;
-        public string Status { get; set; } = LoanStatuses.Active;
-        public DateTime ReservedAt { get; set; } = DateTime.UtcNow;
+        public string MediaType { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public DateTime ReservedAt { get; set; }
         public DateTime? DueAt { get; set; }
         public DateTime? ReturnedAt { get; set; }
         public DateTime? CancelledAt { get; set; }

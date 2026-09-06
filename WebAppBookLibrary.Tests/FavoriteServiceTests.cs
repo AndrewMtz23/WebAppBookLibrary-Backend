@@ -54,7 +54,7 @@ public sealed class FavoriteServiceTests
         public Task<User?> FindActiveUserAsync(string username, CancellationToken token) => Task.FromResult<User?>(new User { Id = "u1", Username = username, IsActive = true });
         public Task<bool> ActiveBookExistsAsync(string bookId, CancellationToken token) => Task.FromResult(BookExists);
         public Task<Favorite?> FindAsync(string userId, string bookId, CancellationToken token) => Task.FromResult(Existing);
-        public Task<IReadOnlyList<Favorite>> ListAsync(string userId, CancellationToken token) => Task.FromResult<IReadOnlyList<Favorite>>([]);
+        public Task<WebAppBookLibrary.Domain.Common.PagedResult<Favorite>> ListAsync(string userId, WebAppBookLibrary.Contracts.Favorites.FavoriteQuery query, CancellationToken token) => Task.FromResult(new WebAppBookLibrary.Domain.Common.PagedResult<Favorite>([], 1, 20, 0));
         public Task InsertAsync(Favorite favorite, CancellationToken token) { Insertions++; return Task.CompletedTask; }
         public Task<bool> DeleteAsync(string userId, string bookId, CancellationToken token) { LastDelete = (userId, bookId); return Task.FromResult(DeleteResult); }
     }

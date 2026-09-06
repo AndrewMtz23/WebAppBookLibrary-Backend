@@ -89,6 +89,15 @@ public static class Program
         app.UseCors(CorsPolicyName);
         app.UseRateLimiter();
         app.UseAuthentication();
+        app.Use(async (context, next) =>
+        {
+            if (!await CurrentAccountValidator.ValidateAsync(context.User, context.RequestServices.GetRequiredService<IUserStore>()))
+            {
+                await ApiProblemFactory.WriteAsync(context, StatusCodes.Status401Unauthorized, "Session is no longer valid", context.RequestAborted);
+                return;
+            }
+            await next(context);
+        });
 
         if (app.Environment.IsDevelopment())
             app.Use(CreateDevelopmentLoggingMiddleware());

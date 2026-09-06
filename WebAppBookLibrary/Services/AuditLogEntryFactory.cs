@@ -46,6 +46,8 @@ public static class AuditLogEntryFactory
         var entry = Create("INFORMATION", $"{aggregate}.{action}", null, context);
         entry.EventType = $"{aggregate}.{action}";
         entry.ActorId = actorId;
+        entry.ActorUsername = context?.User.Identity?.Name;
+        entry.TargetType = aggregate;
         entry.TargetId = targetId;
         entry.Metadata = metadata?.Where(item => AllowedMetadata.Contains(item.Key)).ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase) ?? [];
         return entry;

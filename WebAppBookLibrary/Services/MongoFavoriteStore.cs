@@ -1,5 +1,7 @@
 using MongoDB.Driver;
 using WebAppBookLibrary.Models;
+using WebAppBookLibrary.Contracts.Favorites;
+using WebAppBookLibrary.Domain.Common;
 
 namespace WebAppBookLibrary.Services;
 
@@ -21,8 +23,14 @@ public sealed class MongoFavoriteStore : IFavoriteStore
         _books.Find(book => book.Id == bookId && book.IsActive).AnyAsync(token);
     public async Task<Favorite?> FindAsync(string userId, string bookId, CancellationToken token) =>
         await _favorites.Find(item => item.UserId == userId && item.BookId == bookId).FirstOrDefaultAsync(token);
-    public async Task<IReadOnlyList<Favorite>> ListAsync(string userId, CancellationToken token) =>
-        await _favorites.Find(item => item.UserId == userId).SortByDescending(item => item.CreatedAt).ToListAsync(token);
+    public async Task<PagedResult<Favorite>> ListAsync(string userId, FavoriteQuery raw, CancellationToken token)
+    {
+        var query = raw.Normalize();
+        var filter = Builders<Favorite>.Filter.Eq(item => item.UserId, userId);
+        var total = await _favorites.CountDocumentsAsync(filter, cancellationToken: token);
+        var items = await _favorites.Find(filter).SortByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id).Skip((query.Page - 1) * query.PageSize).Limit(query.PageSize).ToListAsync(token);
+        return new(items, query.Page, query.PageSize, total);
+    }
     public Task InsertAsync(Favorite favorite, CancellationToken token) => _favorites.InsertOneAsync(favorite, cancellationToken: token);
     public async Task<bool> DeleteAsync(string userId, string bookId, CancellationToken token) =>
         (await _favorites.DeleteOneAsync(item => item.UserId == userId && item.BookId == bookId, token)).DeletedCount == 1;

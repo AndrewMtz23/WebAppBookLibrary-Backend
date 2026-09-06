@@ -149,6 +149,26 @@ public sealed class BookServiceTests
         Assert.Null(store.ReplacedBook);
     }
 
+    [Fact]
+    public async Task UpdateAsync_RejectsMediaChangeWhilePhysicalLoansAreActive()
+    {
+        var existing = CreatePhysicalBook();
+        var store = new StubBookStore(new PagedResult<BookCatalogEntry>([], 1, 20, 0)) { FoundBook = existing, ActivePhysicalLoans = 1 };
+        var service = new BookService(store);
+        var request = new BookWriteRequest
+        {
+            Title = "Digital replacement", Authors = ["Author"],
+            Description = "A sufficiently descriptive digital replacement book.", Genres = ["Essay"],
+            MediaType = MediaTypes.Digital, DigitalResourceUrl = new Uri("https://cdn.example/book.pdf")
+        };
+
+        var result = await service.UpdateAsync(existing.Id, request, DateTime.UtcNow, CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Equal("inventory_conflict", result.ErrorCode);
+        Assert.Null(store.ReplacedBook);
+    }
+
     private static Book CreatePhysicalBook() => new()
     {
         Id = "507f1f77bcf86cd799439011",
@@ -173,13 +193,14 @@ public sealed class BookServiceTests
         public Book? FoundBook { get; init; }
         public int ActivePhysicalLoans { get; init; }
         public Book? ReplacedBook { get; private set; }
-        public Task<PagedResult<BookCatalogEntry>> SearchAsync(NormalizedBookQuery query, bool includeInactive, CancellationToken cancellationToken) => Task.FromResult(result);
-        public Task<BookCatalogEntry?> FindCatalogEntryAsync(string id, bool includeInactive, CancellationToken cancellationToken) => Task.FromResult(DetailEntry);
+        public bool ReplaceResult { get; init; } = true;
+        public Task<PagedResult<BookCatalogEntry>> SearchAsync(NormalizedBookQuery query, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken) => Task.FromResult(result);
+        public Task<BookCatalogEntry?> FindCatalogEntryAsync(string id, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken) => Task.FromResult(DetailEntry);
         public Task<Book?> FindByIdAsync(string id, CancellationToken cancellationToken) => Task.FromResult(FoundBook);
         public Task<bool> IsbnExistsAsync(string normalizedIsbn, string? excludingId, CancellationToken cancellationToken) => Task.FromResult(IsbnExists);
         public Task InsertAsync(Book book, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task<int> CountActivePhysicalLoansAsync(string bookId, CancellationToken cancellationToken) => Task.FromResult(ActivePhysicalLoans);
-        public Task<bool> ReplaceMetadataAsync(Book book, CancellationToken cancellationToken) { ReplacedBook = book; return Task.FromResult(true); }
+        public Task<bool> ReplaceMetadataAsync(Book book, DateTime expectedUpdatedAt, CancellationToken cancellationToken) { ReplacedBook = book; return Task.FromResult(ReplaceResult); }
         public Task<bool> SetActiveAsync(string id, bool isActive, DateTime updatedAtUtc, CancellationToken cancellationToken) => Task.FromResult(StatusResult);
     }
 }

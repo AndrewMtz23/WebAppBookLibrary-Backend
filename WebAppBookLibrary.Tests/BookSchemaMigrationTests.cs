@@ -40,4 +40,24 @@ public sealed class BookSchemaMigrationTests
         Assert.Null(result.Replacement);
         Assert.Contains("missing_author", result.AnomalyCodes);
     }
+
+    [Fact]
+    public void Analyze_PreservesValidFieldsInPartiallyEnrichedDocument()
+    {
+        var partial = new BsonDocument
+        {
+            ["_id"] = ObjectId.GenerateNewId(), ["Title"] = "Partial",
+            ["Authors"] = new BsonArray { "Existing Author" },
+            ["Description"] = "Existing description that must survive migration.",
+            ["MediaType"] = MediaTypes.Digital,
+            ["DigitalResourceUrl"] = "https://cdn.example/book.pdf"
+        };
+
+        var result = BookSchemaMigration.Analyze(partial, DateTime.UtcNow);
+
+        Assert.Equal(MigrationDisposition.Transformable, result.Disposition);
+        Assert.Equal("Existing description that must survive migration.", result.Replacement!["Description"].AsString);
+        Assert.Equal(MediaTypes.Digital, result.Replacement["MediaType"].AsString);
+        Assert.False(result.Replacement.Contains("TotalCopies"));
+    }
 }

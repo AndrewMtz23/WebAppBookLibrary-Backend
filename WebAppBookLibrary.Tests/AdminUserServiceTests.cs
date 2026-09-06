@@ -64,5 +64,18 @@ public sealed class AdminUserServiceTests
         public Task<long> CountActiveAdminsAsync(CancellationToken token) => Task.FromResult(ActiveAdmins);
         public Task<bool> TrySetRoleAsync(string id, string role, DateTime updatedAtUtc, CancellationToken token) { Updates++; LastRoleUpdate = (id, role, updatedAtUtc); return Task.FromResult(true); }
         public Task<bool> TrySetStatusAsync(string id, bool active, DateTime updatedAtUtc, CancellationToken token) { Updates++; return Task.FromResult(true); }
+        public Task<AdminStoreMutationResult> SetRoleSafelyAsync(string actorId, string targetId, string role, DateTime updatedAtUtc, CancellationToken token)
+        {
+            if (actorId == targetId && role != RoleNames.Admin) return Task.FromResult(AdminStoreMutationResult.SelfMutation);
+            if (Target?.Role == RoleNames.Admin && Target.IsActive && role != RoleNames.Admin && ActiveAdmins <= 1) return Task.FromResult(AdminStoreMutationResult.LastAdmin);
+            if (Target is null) return Task.FromResult(AdminStoreMutationResult.NotFound);
+            Updates++; LastRoleUpdate = (targetId, role, updatedAtUtc); return Task.FromResult(AdminStoreMutationResult.Success);
+        }
+        public Task<AdminStoreMutationResult> SetStatusSafelyAsync(string actorId, string targetId, bool active, DateTime updatedAtUtc, CancellationToken token)
+        {
+            if (actorId == targetId && !active) return Task.FromResult(AdminStoreMutationResult.SelfMutation);
+            if (Target is null) return Task.FromResult(AdminStoreMutationResult.NotFound);
+            Updates++; return Task.FromResult(AdminStoreMutationResult.Success);
+        }
     }
 }

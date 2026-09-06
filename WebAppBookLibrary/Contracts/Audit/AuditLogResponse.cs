@@ -11,7 +11,14 @@ public sealed record AuditLogResponse(
     string? Action,
     string? Controller,
     string? IP,
-    string? Method)
+    string? Method,
+    string? EventType,
+    string? ActorId,
+    string? ActorUsername,
+    string? TargetType,
+    string? TargetId,
+    string? CorrelationId,
+    IReadOnlyDictionary<string, string> Metadata)
 {
     public static AuditLogResponse From(LogEntry entry)
     {
@@ -24,7 +31,14 @@ public sealed record AuditLogResponse(
             entry.Action,
             entry.Controller,
             MaskIp(entry.IP),
-            entry.Method);
+            entry.Method,
+            entry.EventType,
+            entry.ActorId,
+            entry.ActorUsername,
+            entry.TargetType,
+            entry.TargetId,
+            entry.CorrelationId,
+            entry.Metadata);
     }
 
     private static string SanitizeLegacyMessage(LogEntry entry)

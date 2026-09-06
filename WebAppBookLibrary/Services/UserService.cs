@@ -37,8 +37,11 @@ public sealed class UserService
 
         var user = new User
         {
-            Username = request.Username,
-            Email = request.Email,
+            Username = request.Username.Trim(),
+            NormalizedUsername = request.Username.Trim().ToUpperInvariant(),
+            DisplayName = request.Username.Trim(),
+            Email = request.Email.Trim(),
+            NormalizedEmail = request.Email.Trim().ToUpperInvariant(),
             PasswordHash = PasswordHasher.HashPassword(request.Password),
             Role = RoleNames.User
         };

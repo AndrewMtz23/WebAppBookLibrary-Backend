@@ -13,20 +13,22 @@ public sealed class BookService
     public BookService(IBookStore store) => _store = store;
     public BookService(IBookStore store, Logservice log) : this(store) => _log = log;
 
-    public async Task<PagedResult<BookSummaryResponse>> SearchAsync(BookQuery query, bool includeInactive, CancellationToken token)
+    public async Task<PagedResult<BookSummaryResponse>> SearchAsync(BookQuery query, bool includeInactive, string? viewerUsername, CancellationToken token)
     {
-        var page = await _store.SearchAsync(query.Normalize(), includeInactive, token);
+        var page = await _store.SearchAsync(query.Normalize(), includeInactive, viewerUsername, token);
         return new(page.Items.Select(item => BookMapper.ToSummary(item.Book, item.ReservationCount, item.IsFavorite)).ToArray(), page.Page, page.PageSize, page.TotalItems);
     }
 
-    public async Task<List<Book>> GetAllAsync() => (await _store.SearchAsync(new BookQuery { PageSize = 100 }.Normalize(), true, CancellationToken.None)).Items.Select(item => item.Book).ToList();
+    public Task<PagedResult<BookSummaryResponse>> SearchAsync(BookQuery query, bool includeInactive, CancellationToken token) => SearchAsync(query, includeInactive, null, token);
+    public async Task<List<Book>> GetAllAsync() => (await _store.SearchAsync(new BookQuery { PageSize = 100 }.Normalize(), true, null, CancellationToken.None)).Items.Select(item => item.Book).ToList();
     public Task<Book?> GetByIdAsync(string id) => _store.FindByIdAsync(id, CancellationToken.None);
 
-    public async Task<BookDetailResponse?> GetDetailAsync(string id, bool includeInactive, CancellationToken token)
+    public async Task<BookDetailResponse?> GetDetailAsync(string id, bool includeInactive, string? viewerUsername, CancellationToken token)
     {
-        var entry = await _store.FindCatalogEntryAsync(id, includeInactive, token);
+        var entry = await _store.FindCatalogEntryAsync(id, includeInactive, viewerUsername, token);
         return entry is null ? null : BookMapper.ToDetail(entry.Book, entry.ReservationCount, entry.IsFavorite);
     }
+    public Task<BookDetailResponse?> GetDetailAsync(string id, bool includeInactive, CancellationToken token) => GetDetailAsync(id, includeInactive, null, token);
 
     public async Task<BookMutationResult> SetActiveAsync(string id, bool isActive, DateTime updatedAtUtc, CancellationToken token)
     {
@@ -59,6 +61,8 @@ public sealed class BookService
             return new(false, "book_not_found", null);
 
         var activePhysicalLoans = await _store.CountActivePhysicalLoansAsync(id, token);
+        if (activePhysicalLoans > 0 && existing.MediaType != request.MediaType)
+            return new(false, "inventory_conflict", null);
         if (request.MediaType == MediaTypes.Physical && request.TotalCopies < activePhysicalLoans)
             return new(false, "inventory_conflict", null);
 
@@ -69,8 +73,8 @@ public sealed class BookService
         var book = BookMapper.ToUpdatedEntity(request, existing, activePhysicalLoans, nowUtc);
         try
         {
-            if (!await _store.ReplaceMetadataAsync(book, token))
-                return new(false, "book_not_found", null);
+            if (!await _store.ReplaceMetadataAsync(book, existing.UpdatedAt, token))
+                return new(false, "concurrent_update_conflict", null);
             await LogAsync("INFORMATION", $"Book updated: {book.Id}");
             return new(true, string.Empty, BookMapper.ToDetail(book, 0, false));
         }
@@ -89,7 +93,7 @@ public sealed class BookService
 
     public async Task<(bool Success, string Message)> UpdateAsync(Book book)
     {
-        try { return await _store.ReplaceMetadataAsync(book, CancellationToken.None) ? (true, "Book updated successfully.") : (false, "Book not found."); }
+        try { return await _store.ReplaceMetadataAsync(book, book.UpdatedAt, CancellationToken.None) ? (true, "Book updated successfully.") : (false, "Book not found."); }
         catch (Exception exception) { await LogAsync("ERROR", "Error updating book.", exception); return (false, "Error updating book."); }
     }
 

@@ -27,6 +27,9 @@ public class UserServiceTests
         Assert.True(result.Success);
         Assert.Equal(RoleNames.User, inserted!.Role);
         Assert.True(PasswordHasher.VerifyPassword("Secure1", inserted.PasswordHash));
+        Assert.Equal("ANA", inserted.NormalizedUsername);
+        Assert.Equal("ANA@EXAMPLE.COM", inserted.NormalizedEmail);
+        Assert.Equal("ana", inserted.DisplayName);
     }
 
     [Fact]

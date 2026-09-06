@@ -33,6 +33,10 @@ namespace WebAppBookLibrary.Services
         }
 
         public Task LogDomainAsync(LogEntry entry) => _logs.InsertOneAsync(entry);
+        public Task BookChangedAsync(string action, string actorId, string targetId, IReadOnlyDictionary<string, string>? metadata = null) => LogDomainAsync(AuditLogEntryFactory.BookChanged(action, actorId, targetId, metadata, _httpContextAccessor.HttpContext));
+        public Task LoanChangedAsync(string action, string actorId, string targetId, IReadOnlyDictionary<string, string>? metadata = null) => LogDomainAsync(AuditLogEntryFactory.LoanChanged(action, actorId, targetId, metadata, _httpContextAccessor.HttpContext));
+        public Task UserChangedAsync(string action, string actorId, string targetId, IReadOnlyDictionary<string, string>? metadata = null) => LogDomainAsync(AuditLogEntryFactory.UserChanged(action, actorId, targetId, metadata, _httpContextAccessor.HttpContext));
+        public Task AuthenticationObservedAsync(string action, string actorId, IReadOnlyDictionary<string, string>? metadata = null) => LogDomainAsync(AuditLogEntryFactory.AuthenticationObserved(action, actorId, metadata, _httpContextAccessor.HttpContext));
 
         private void LogToProvider(string level, string message, Exception? exception)
         {

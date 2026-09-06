@@ -45,10 +45,10 @@ public static class BookMapper
     }
 
     public static BookSummaryResponse ToSummary(Book book, long reservationCount, bool isFavorite) =>
-        new(book.Id, book.Title, book.Subtitle, book.Authors, book.CoverUrl, book.MediaType, book.Genres, book.AvailableCopies, book.TotalCopies, reservationCount, isFavorite, book.IsActive);
+        new(book.Id, book.Title, book.Subtitle, EffectiveAuthors(book), book.CoverUrl, EffectiveMediaType(book), EffectiveGenres(book), EffectiveAvailable(book), EffectiveTotal(book), reservationCount, isFavorite, book.IsActive);
 
     public static BookDetailResponse ToDetail(Book book, long reservationCount, bool isFavorite) =>
-        new(book.Id, book.Title, book.Subtitle, book.Authors, book.Isbn, book.Description, book.Publisher, book.PublishedDate, book.Language, book.PageCount, book.Genres, book.Tags, book.CoverUrl, book.MediaType, book.DigitalResourceUrl, book.AvailableCopies, book.TotalCopies, reservationCount, isFavorite, book.IsActive, book.CreatedAt, book.UpdatedAt);
+        new(book.Id, book.Title, book.Subtitle, EffectiveAuthors(book), book.Isbn, string.IsNullOrWhiteSpace(book.Description) ? "Sin descripción disponible para este registro heredado." : book.Description, book.Publisher, book.PublishedDate ?? (book.Year is null ? null : new DateTime(book.Year.Value, 1, 1, 0, 0, 0, DateTimeKind.Utc)), book.Language, book.PageCount, EffectiveGenres(book), book.Tags, book.CoverUrl, EffectiveMediaType(book), EffectiveAvailable(book), EffectiveTotal(book), reservationCount, isFavorite, book.IsActive, book.CreatedAt, book.UpdatedAt);
 
     public static Book ToUpdatedEntity(BookWriteRequest request, Book existing, int activePhysicalLoans, DateTime nowUtc)
     {
@@ -64,4 +64,9 @@ public static class BookMapper
     }
 
     private static string? NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static IReadOnlyList<string> EffectiveAuthors(Book book) => book.Authors.Count > 0 ? book.Authors : string.IsNullOrWhiteSpace(book.Author) ? [] : [book.Author];
+    private static IReadOnlyList<string> EffectiveGenres(Book book) => book.Genres.Count > 0 ? book.Genres : string.IsNullOrWhiteSpace(book.Genre) ? [] : [book.Genre];
+    private static string EffectiveMediaType(Book book) => string.IsNullOrWhiteSpace(book.MediaType) ? MediaTypes.Physical : book.MediaType;
+    private static int? EffectiveTotal(Book book) => EffectiveMediaType(book) == MediaTypes.Physical ? book.TotalCopies ?? 1 : null;
+    private static int? EffectiveAvailable(Book book) => EffectiveMediaType(book) == MediaTypes.Physical ? book.AvailableCopies ?? (book.IsAvailable ? 1 : 0) : null;
 }

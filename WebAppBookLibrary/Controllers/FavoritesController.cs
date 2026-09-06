@@ -4,18 +4,22 @@ using MongoDB.Bson;
 using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
+using WebAppBookLibrary.Contracts.Favorites;
 
 namespace WebAppBookLibrary.Controllers;
 
 [ApiController]
 [Route("api/favorites")]
 [Authorize(Policy = PolicyNames.BorrowBooks)]
-public sealed class FavoritesController(FavoriteService service) : ControllerBase
+public sealed class FavoritesController : ControllerBase
 {
+    private readonly FavoriteService service;
+    private readonly Logservice log;
+    public FavoritesController(FavoriteService service, Logservice log) { this.service = service; this.log = log; }
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken token)
+    public async Task<IActionResult> List([FromQuery] FavoriteQuery query, CancellationToken token)
     {
-        var result = await service.ListAsync(User.Identity?.Name ?? string.Empty, token);
+        var result = await service.ListAsync(User.Identity?.Name ?? string.Empty, query, token);
         return result is null ? ApiProblemFactory.Result(403, "Favorites are not permitted") : Ok(result);
     }
 
@@ -27,6 +31,7 @@ public sealed class FavoritesController(FavoriteService service) : ControllerBas
         if (!result.Success) return result.ErrorCode == FavoriteErrorCodes.BookNotFound
             ? ApiProblemFactory.Result(404, "Book not found")
             : ApiProblemFactory.Result(403, "Favorite is not permitted");
+        if (!result.Idempotent) await log.UserChangedAsync("favorite_added", User.Identity?.Name ?? string.Empty, result.Favorite!.Id, new Dictionary<string, string> { ["operation"] = "favorite" });
         return result.Idempotent ? Ok(result.Favorite) : StatusCode(StatusCodes.Status201Created, result.Favorite);
     }
 
@@ -35,6 +40,8 @@ public sealed class FavoritesController(FavoriteService service) : ControllerBas
     {
         if (!ObjectId.TryParse(bookId, out _)) return ApiProblemFactory.Result(400, "Invalid book identifier");
         var result = await service.RemoveAsync(User.Identity?.Name ?? string.Empty, bookId, token);
-        return result.Success ? NoContent() : ApiProblemFactory.Result(403, "Favorite is not permitted");
+        if (!result.Success) return ApiProblemFactory.Result(403, "Favorite is not permitted");
+        if (!result.Idempotent) await log.UserChangedAsync("favorite_removed", User.Identity?.Name ?? string.Empty, bookId, new Dictionary<string, string> { ["operation"] = "favorite" });
+        return NoContent();
     }
 }

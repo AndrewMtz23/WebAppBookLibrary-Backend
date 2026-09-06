@@ -26,7 +26,7 @@ public class BooksController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] BookQuery query, CancellationToken cancellationToken)
     {
-        var page = await _bookService.SearchAsync(query, User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian), cancellationToken);
+        var page = await _bookService.SearchAsync(query, User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian), User.Identity?.Name, cancellationToken);
         return Ok(page);
     }
 
@@ -37,7 +37,7 @@ public class BooksController : ControllerBase
             return ApiProblemFactory.Result(400, "Invalid book identifier");
 
         var includeInactive = User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian);
-        var book = await _bookService.GetDetailAsync(id, includeInactive, cancellationToken);
+        var book = await _bookService.GetDetailAsync(id, includeInactive, User.Identity?.Name, cancellationToken);
         if (book is null)
             return ApiProblemFactory.Result(404, "Book not found");
 
@@ -55,6 +55,7 @@ public class BooksController : ControllerBase
                 ? BookProblem(409, "ISBN already exists", result.ErrorCode)
                 : BookProblem(400, "Book could not be created", result.ErrorCode);
         }
+        if (_logService is not null) await _logService.BookChangedAsync("created", User.Identity?.Name ?? string.Empty, result.Book!.Id, new Dictionary<string, string> { ["mediaType"] = result.Book.MediaType });
         return CreatedAtAction(nameof(GetById), new { id = result.Book!.Id }, result.Book);
     }
 
@@ -66,14 +67,17 @@ public class BooksController : ControllerBase
             return ApiProblemFactory.Result(400, "Invalid book identifier");
 
         var result = await _bookService.UpdateAsync(id, request, DateTime.UtcNow, cancellationToken);
-        return result.ErrorCode switch
+        var response = result.ErrorCode switch
         {
             "book_not_found" => ApiProblemFactory.Result(404, "Book not found"),
             "isbn_conflict" => BookProblem(409, "ISBN already exists", result.ErrorCode),
             "inventory_conflict" => BookProblem(409, "Total copies cannot be lower than active physical loans", result.ErrorCode),
+            "concurrent_update_conflict" => BookProblem(409, "Book changed while it was being updated", result.ErrorCode),
             _ when !result.Success => BookProblem(400, "Book could not be updated", result.ErrorCode),
             _ => Ok(result.Book)
         };
+        if (result.Success && _logService is not null) await _logService.BookChangedAsync("updated", User.Identity?.Name ?? string.Empty, id, new Dictionary<string, string> { ["mediaType"] = result.Book!.MediaType });
+        return response;
     }
 
     [HttpDelete("{id}")]
@@ -86,7 +90,7 @@ public class BooksController : ControllerBase
         var result = await _bookService.DeleteAsync(id);
         if (!result.Success)
             return ApiProblemFactory.Result(404, "Book not found");
-
+        if (_logService is not null) await _logService.BookChangedAsync("deactivated", User.Identity?.Name ?? string.Empty, id);
         return NoContent();
     }
 
@@ -98,9 +102,9 @@ public class BooksController : ControllerBase
             return ApiProblemFactory.Result(400, "Invalid book identifier");
 
         var result = await _bookService.SetActiveAsync(id, request.IsActive, DateTime.UtcNow, cancellationToken);
-        return result.Success
-            ? Ok(new { message = request.IsActive ? "Book activated" : "Book deactivated" })
-            : ApiProblemFactory.Result(404, "Book not found");
+        if (!result.Success) return ApiProblemFactory.Result(404, "Book not found");
+        if (_logService is not null) await _logService.BookChangedAsync(request.IsActive ? "activated" : "deactivated", User.Identity?.Name ?? string.Empty, id);
+        return Ok(new { message = request.IsActive ? "Book activated" : "Book deactivated" });
     }
 
     private static ObjectResult BookProblem(int statusCode, string title, string errorCode)
