@@ -50,17 +50,14 @@ namespace WebAppBookLibrary.Services
             {
                 new CreateIndexModel<User>(userBuilder.Ascending(u => u.Username), new CreateIndexOptions { Unique = true }),
                 new CreateIndexModel<User>(userBuilder.Ascending(u => u.Email), new CreateIndexOptions { Unique = true }),
-                new CreateIndexModel<User>(userBuilder.Ascending(u => u.NormalizedUsername), new CreateIndexOptions<User> { Name = "ux_users_normalized_username", Unique = true, PartialFilterExpression = Builders<User>.Filter.Ne(u => u.NormalizedUsername, string.Empty) }),
-                new CreateIndexModel<User>(userBuilder.Ascending(u => u.NormalizedEmail), new CreateIndexOptions<User> { Name = "ux_users_normalized_email", Unique = true, PartialFilterExpression = Builders<User>.Filter.Ne(u => u.NormalizedEmail, string.Empty) }),
+                new CreateIndexModel<User>(userBuilder.Ascending(u => u.NormalizedUsername), new CreateIndexOptions<User> { Name = "ux_users_normalized_username", Unique = true, PartialFilterExpression = NormalizedUsernameIndexFilter() }),
+                new CreateIndexModel<User>(userBuilder.Ascending(u => u.NormalizedEmail), new CreateIndexOptions<User> { Name = "ux_users_normalized_email", Unique = true, PartialFilterExpression = NormalizedEmailIndexFilter() }),
                 new CreateIndexModel<User>(userBuilder.Ascending(u => u.Role).Ascending(u => u.IsActive), new CreateIndexOptions { Name = "ix_users_role_active" })
             };
             await Users.Indexes.CreateManyAsync(userIndexes);
 
             var bookBuilder = Builders<Book>.IndexKeys;
-            var isbnFilter = Builders<Book>.Filter.And(
-                Builders<Book>.Filter.Exists(book => book.Isbn),
-                Builders<Book>.Filter.Ne(book => book.Isbn, null),
-                Builders<Book>.Filter.Ne(book => book.Isbn, string.Empty));
+            var isbnFilter = IsbnIndexFilter();
             var bookIndexes = new[]
             {
                 new CreateIndexModel<Book>(
@@ -82,9 +79,7 @@ namespace WebAppBookLibrary.Services
             await Books.Indexes.CreateManyAsync(bookIndexes);
 
             var loanBuilder = Builders<Loan>.IndexKeys;
-            var activeReservationFilter = Builders<Loan>.Filter.And(
-                Builders<Loan>.Filter.Exists(loan => loan.ActiveReservationKey),
-                Builders<Loan>.Filter.Ne(loan => loan.ActiveReservationKey, null));
+            var activeReservationFilter = ActiveReservationIndexFilter();
             var loanIndexes = new[]
             {
                 new CreateIndexModel<Loan>(
@@ -106,7 +101,7 @@ namespace WebAppBookLibrary.Services
             var logBuilder = Builders<LogEntry>.IndexKeys;
             var logIndexes = new[]
             {
-                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_timestamp" }),
+                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.Timestamp), new CreateIndexOptions { Name = "Timestamp_1" }),
                 new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.Level).Descending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_level_timestamp" }),
                 new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.EventType).Descending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_event_timestamp" })
             };
@@ -114,5 +109,17 @@ namespace WebAppBookLibrary.Services
 
             Console.WriteLine("✅ Índices creados exitosamente en MongoDB.");
         }
+
+        internal static FilterDefinition<User> NormalizedUsernameIndexFilter() =>
+            Builders<User>.Filter.Gt(user => user.NormalizedUsername, string.Empty);
+
+        internal static FilterDefinition<User> NormalizedEmailIndexFilter() =>
+            Builders<User>.Filter.Gt(user => user.NormalizedEmail, string.Empty);
+
+        internal static FilterDefinition<Book> IsbnIndexFilter() =>
+            Builders<Book>.Filter.Gt(book => book.Isbn, string.Empty);
+
+        internal static FilterDefinition<Loan> ActiveReservationIndexFilter() =>
+            Builders<Loan>.Filter.Gt(loan => loan.ActiveReservationKey, string.Empty);
     }
 }

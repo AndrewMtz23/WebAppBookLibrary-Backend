@@ -1,5 +1,6 @@
 using System.Reflection;
 using WebAppBookLibrary.Contracts.Books;
+using WebAppBookLibrary.Controllers;
 using WebAppBookLibrary.Services;
 
 namespace WebAppBookLibrary.Tests;
@@ -13,6 +14,13 @@ public sealed class ReaderEnablementContractTests
 
         Assert.Equal("reservationCount", normalized.Sort);
         Assert.Equal("desc", normalized.Direction);
+    }
+
+    [Fact]
+    public void BookQuery_uses_relevance_only_for_text_searches()
+    {
+        Assert.Equal("relevance", new BookQuery { Query = "historia", Sort = "relevance" }.Normalize().Sort);
+        Assert.Equal("createdAt", new BookQuery { Sort = "relevance" }.Normalize().Sort);
     }
 
     [Fact]
@@ -43,6 +51,16 @@ public sealed class ReaderEnablementContractTests
         Assert.Equal(
             [typeof(string), typeof(DateTime), typeof(CancellationToken)],
             lastLoginMethod!.GetParameters().Select(parameter => parameter.ParameterType));
+    }
+
+    [Fact]
+    public void LoansController_has_an_unambiguous_dependency_injection_constructor()
+    {
+        var constructors = typeof(LoansController).GetConstructors();
+        var preferred = constructors.Count(constructor => constructor.GetCustomAttributes()
+            .Any(attribute => attribute.GetType().Name == "ActivatorUtilitiesConstructorAttribute"));
+
+        Assert.True(constructors.Length == 1 || preferred == 1);
     }
 
     private static string[] PropertyNames(Type type) =>

@@ -47,7 +47,9 @@ public sealed class MongoBookStore : IBookStore
         if (query.Sort == "reservationCount")
             return await SearchByPopularityAsync(filter, query, viewerUsername, total, cancellationToken);
         var field = query.Sort switch { "title" => "Title", "publishedDate" => "PublishedDate", _ => "CreatedAt" };
-        var sort = query.Direction == "asc" ? Builders<Book>.Sort.Ascending(field).Ascending(book => book.Id) : Builders<Book>.Sort.Descending(field).Descending(book => book.Id);
+        var sort = query.Sort == "relevance"
+            ? Builders<Book>.Sort.MetaTextScore("score").Ascending(book => book.Id)
+            : query.Direction == "asc" ? Builders<Book>.Sort.Ascending(field).Ascending(book => book.Id) : Builders<Book>.Sort.Descending(field).Descending(book => book.Id);
         var books = await _books.Find(filter).Sort(sort).Skip((query.Page - 1) * query.PageSize).Limit(query.PageSize).ToListAsync(cancellationToken);
         var counts = await ReservationCountsAsync(books.Select(book => book.Id), cancellationToken);
         var favoriteIds = await FavoriteBookIdsAsync(viewerUsername, books.Select(book => book.Id), cancellationToken);
