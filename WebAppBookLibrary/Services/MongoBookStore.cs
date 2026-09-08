@@ -1,3 +1,5 @@
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using WebAppBookLibrary.Contracts.Books;
 using WebAppBookLibrary.Domain.Books;
@@ -42,8 +44,12 @@ public sealed class MongoBookStore : IBookStore
         }
         var filter = filters.Count == 0 ? builder.Empty : builder.And(filters);
         var total = await _books.CountDocumentsAsync(filter, cancellationToken: cancellationToken);
+        if (query.Sort == "reservationCount")
+            return await SearchByPopularityAsync(filter, query, viewerUsername, total, cancellationToken);
         var field = query.Sort switch { "title" => "Title", "publishedDate" => "PublishedDate", _ => "CreatedAt" };
-        var sort = query.Direction == "asc" ? Builders<Book>.Sort.Ascending(field).Ascending(book => book.Id) : Builders<Book>.Sort.Descending(field).Descending(book => book.Id);
+        var sort = query.Sort == "relevance"
+            ? Builders<Book>.Sort.MetaTextScore("score").Ascending(book => book.Id)
+            : query.Direction == "asc" ? Builders<Book>.Sort.Ascending(field).Ascending(book => book.Id) : Builders<Book>.Sort.Descending(field).Descending(book => book.Id);
         var books = await _books.Find(filter).Sort(sort).Skip((query.Page - 1) * query.PageSize).Limit(query.PageSize).ToListAsync(cancellationToken);
         var counts = await ReservationCountsAsync(books.Select(book => book.Id), cancellationToken);
         var favoriteIds = await FavoriteBookIdsAsync(viewerUsername, books.Select(book => book.Id), cancellationToken);
@@ -81,6 +87,77 @@ public sealed class MongoBookStore : IBookStore
         return (await _books.ReplaceOneAsync(filter, book, cancellationToken: cancellationToken)).MatchedCount == 1;
     }
     public async Task<bool> SetActiveAsync(string id, bool active, DateTime updated, CancellationToken token) => (await _books.UpdateOneAsync(book => book.Id == id, Builders<Book>.Update.Set(book => book.IsActive, active).Set(book => book.UpdatedAt, updated), cancellationToken: token)).MatchedCount == 1;
+
+    public async Task<IReadOnlyList<BookFacetResponse>> GetGenreFacetsAsync(CancellationToken token)
+    {
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", new BsonDocument("$or", new BsonArray
+            {
+                new BsonDocument("IsActive", true),
+                new BsonDocument("IsActive", new BsonDocument("$exists", false))
+            })),
+            new BsonDocument("$unwind", "$Genres"),
+            new BsonDocument("$match", new BsonDocument("Genres", new BsonDocument
+            {
+                { "$type", "string" },
+                { "$ne", string.Empty }
+            })),
+            new BsonDocument("$group", new BsonDocument
+            {
+                { "_id", "$Genres" },
+                { "count", new BsonDocument("$sum", 1) }
+            }),
+            new BsonDocument("$sort", new BsonDocument { { "count", -1 }, { "_id", 1 } })
+        };
+        var rows = await _books.Aggregate<BsonDocument>(pipeline).ToListAsync(token);
+        return rows.Select(row => new BookFacetResponse(row["_id"].AsString, row["count"].ToInt64())).ToArray();
+    }
+
+    private async Task<PagedResult<BookCatalogEntry>> SearchByPopularityAsync(
+        FilterDefinition<Book> filter,
+        NormalizedBookQuery query,
+        string? viewerUsername,
+        long total,
+        CancellationToken token)
+    {
+        var renderedFilter = filter.Render(new RenderArgs<Book>(_books.DocumentSerializer, _books.Settings.SerializerRegistry));
+        var direction = query.Direction == "asc" ? 1 : -1;
+        var pipeline = new[]
+        {
+            new BsonDocument("$match", renderedFilter),
+            new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", _loans.CollectionNamespace.CollectionName },
+                { "let", new BsonDocument("bookId", new BsonDocument("$toString", "$_id")) },
+                { "pipeline", new BsonArray
+                    {
+                        new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$eq", new BsonArray { "$BookId", "$$bookId" }))),
+                        new BsonDocument("$count", "value")
+                    }
+                },
+                { "as", "_reservationCounts" }
+            }),
+            new BsonDocument("$set", new BsonDocument("_reservationCount", new BsonDocument("$ifNull", new BsonArray
+            {
+                new BsonDocument("$first", "$_reservationCounts.value"),
+                0
+            }))),
+            new BsonDocument("$sort", new BsonDocument { { "_reservationCount", direction }, { "_id", direction } }),
+            new BsonDocument("$skip", (query.Page - 1) * query.PageSize),
+            new BsonDocument("$limit", query.PageSize)
+        };
+        var documents = await _books.Aggregate<BsonDocument>(pipeline).ToListAsync(token);
+        var entries = documents.Select(document =>
+        {
+            var count = document["_reservationCount"].ToInt64();
+            document.Remove("_reservationCount");
+            document.Remove("_reservationCounts");
+            return new BookCatalogEntry(BsonSerializer.Deserialize<Book>(document), count, false);
+        }).ToArray();
+        var favoriteIds = await FavoriteBookIdsAsync(viewerUsername, entries.Select(entry => entry.Book.Id), token);
+        return new(entries.Select(entry => entry with { IsFavorite = favoriteIds.Contains(entry.Book.Id) }).ToArray(), query.Page, query.PageSize, total);
+    }
 
     private async Task<Dictionary<string, long>> ReservationCountsAsync(IEnumerable<string> bookIds, CancellationToken token)
     {

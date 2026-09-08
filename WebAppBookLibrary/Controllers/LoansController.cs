@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using WebAppBookLibrary.Contracts.Loans;
 using WebAppBookLibrary.Errors;
@@ -22,6 +23,7 @@ public class LoansController : ControllerBase
     {
     }
 
+    [ActivatorUtilitiesConstructor]
     public LoansController(LoanService loanService, Logservice? logService)
     {
         _loanService = loanService;

@@ -9,6 +9,18 @@ namespace WebAppBookLibrary.Tests;
 public sealed class BookServiceTests
 {
     [Fact]
+    public async Task GetGenreFacets_returns_store_aggregation()
+    {
+        var expected = new[] { new BookFacetResponse("Historia", 4), new BookFacetResponse("Ensayo", 2) };
+        var store = new StubBookStore(new PagedResult<BookCatalogEntry>([], 1, 20, 0)) { Facets = expected };
+        var service = new BookService(store);
+
+        var result = await service.GetGenreFacetsAsync(CancellationToken.None);
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
     public async Task SearchAsync_ReturnsMappedPaginationAndContextualFields()
     {
         var book = new Book
@@ -194,6 +206,7 @@ public sealed class BookServiceTests
         public int ActivePhysicalLoans { get; init; }
         public Book? ReplacedBook { get; private set; }
         public bool ReplaceResult { get; init; } = true;
+        public IReadOnlyList<BookFacetResponse> Facets { get; init; } = [];
         public Task<PagedResult<BookCatalogEntry>> SearchAsync(NormalizedBookQuery query, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken) => Task.FromResult(result);
         public Task<BookCatalogEntry?> FindCatalogEntryAsync(string id, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken) => Task.FromResult(DetailEntry);
         public Task<Book?> FindByIdAsync(string id, CancellationToken cancellationToken) => Task.FromResult(FoundBook);
@@ -202,5 +215,6 @@ public sealed class BookServiceTests
         public Task<int> CountActivePhysicalLoansAsync(string bookId, CancellationToken cancellationToken) => Task.FromResult(ActivePhysicalLoans);
         public Task<bool> ReplaceMetadataAsync(Book book, DateTime expectedUpdatedAt, CancellationToken cancellationToken) { ReplacedBook = book; return Task.FromResult(ReplaceResult); }
         public Task<bool> SetActiveAsync(string id, bool isActive, DateTime updatedAtUtc, CancellationToken cancellationToken) => Task.FromResult(StatusResult);
+        public Task<IReadOnlyList<BookFacetResponse>> GetGenreFacetsAsync(CancellationToken cancellationToken) => Task.FromResult(Facets);
     }
 }

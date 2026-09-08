@@ -32,4 +32,12 @@ public sealed class MongoUserStore : IUserStore
     {
         return _users.InsertOneAsync(user);
     }
+
+    public Task TouchLastLoginAsync(string userId, DateTime occurredAtUtc, CancellationToken cancellationToken)
+    {
+        var update = Builders<User>.Update
+            .Set(user => user.LastLoginAt, occurredAtUtc)
+            .Set(user => user.UpdatedAt, occurredAtUtc);
+        return _users.UpdateOneAsync(user => user.Id == userId, update, cancellationToken: cancellationToken);
+    }
 }

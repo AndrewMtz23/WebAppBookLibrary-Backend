@@ -217,6 +217,7 @@ public static class Program
         services.AddScoped<FavoriteService>();
         services.AddScoped<AdminUserService>();
         services.AddScoped<DashboardService>();
+        services.AddScoped<ProfileService>();
         services.AddScoped<LoanService>();
         services.AddScoped<Logservice>();
 

@@ -16,4 +16,5 @@ public interface IBookStore
     Task<int> CountActivePhysicalLoansAsync(string bookId, CancellationToken cancellationToken);
     Task<bool> ReplaceMetadataAsync(Book book, DateTime expectedUpdatedAt, CancellationToken cancellationToken);
     Task<bool> SetActiveAsync(string id, bool isActive, DateTime updatedAtUtc, CancellationToken cancellationToken);
+    Task<IReadOnlyList<BookFacetResponse>> GetGenreFacetsAsync(CancellationToken cancellationToken);
 }
