@@ -24,7 +24,7 @@ public class BooksController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetAll([FromQuery] BookQuery query, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetAll([FromQuery(Name = "")] BookQuery query, CancellationToken cancellationToken)
     {
         var page = await _bookService.SearchAsync(query, User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian), User.Identity?.Name, cancellationToken);
         return Ok(page);
