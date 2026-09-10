@@ -29,6 +29,10 @@ public sealed class FavoriteService(IFavoriteStore store)
             await store.InsertAsync(favorite, token);
             return new(true, string.Empty, favorite);
         }
+        catch (BookReferenceUnavailableException)
+        {
+            return new(false, FavoriteErrorCodes.BookNotFound);
+        }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             return new(true, string.Empty, await store.FindAsync(user.Id, bookId, token), true);

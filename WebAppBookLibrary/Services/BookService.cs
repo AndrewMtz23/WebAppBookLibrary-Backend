@@ -24,6 +24,14 @@ public sealed class BookService
     public async Task<List<Book>> GetAllAsync() => (await _store.SearchAsync(new BookQuery { PageSize = 100 }.Normalize(), true, null, CancellationToken.None)).Items.Select(item => item.Book).ToList();
     public Task<Book?> GetByIdAsync(string id) => _store.FindByIdAsync(id, CancellationToken.None);
 
+    public async Task<BookManagementResponse?> GetManagementAsync(string id, CancellationToken token)
+    {
+        var book = await _store.FindByIdAsync(id, token);
+        return book is null ? null : new(BookMapper.ToDetail(book, 0, false), book.DigitalResourceUrl);
+    }
+
+    public Task<BookMutationResult> DeletePermanentlyAsync(string id, CancellationToken token) => _store.DeletePermanentlyAsync(id, token);
+
     public async Task<BookDetailResponse?> GetDetailAsync(string id, bool includeInactive, string? viewerUsername, CancellationToken token)
     {
         var entry = await _store.FindCatalogEntryAsync(id, includeInactive, viewerUsername, token);
@@ -62,6 +70,9 @@ public sealed class BookService
             return new(false, "book_not_found", null);
 
         var activePhysicalLoans = await _store.CountActivePhysicalLoansAsync(id, token);
+        // Inventory can already be held while a reservation insertion is in flight.
+        if (existing.MediaType == MediaTypes.Physical)
+            activePhysicalLoans = Math.Max(activePhysicalLoans, Math.Max(0, (existing.TotalCopies ?? 1) - (existing.AvailableCopies ?? (existing.IsAvailable ? 1 : 0))));
         if (activePhysicalLoans > 0 && existing.MediaType != request.MediaType)
             return new(false, "inventory_conflict", null);
         if (request.MediaType == MediaTypes.Physical && request.TotalCopies < activePhysicalLoans)

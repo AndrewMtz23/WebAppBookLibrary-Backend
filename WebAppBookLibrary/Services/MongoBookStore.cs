@@ -107,12 +107,44 @@ public sealed class MongoBookStore : IBookStore
     }
     public async Task<bool> ReplaceMetadataAsync(Book book, DateTime expectedUpdatedAt, CancellationToken cancellationToken)
     {
-        var version = Builders<Book>.Filter.Eq(item => item.UpdatedAt, expectedUpdatedAt) |
-                      Builders<Book>.Filter.Exists(item => item.UpdatedAt, false);
-        var filter = Builders<Book>.Filter.Eq(item => item.Id, book.Id) & version;
-        return (await _books.ReplaceOneAsync(filter, book, cancellationToken: cancellationToken)).MatchedCount == 1;
+        using var session = await _books.Database.Client.StartSessionAsync(cancellationToken: cancellationToken);
+        return await session.WithTransactionAsync(async (transaction, ct) =>
+        {
+            var version = Builders<Book>.Filter.Eq(item => item.UpdatedAt, expectedUpdatedAt) |
+                          Builders<Book>.Filter.Exists(item => item.UpdatedAt, false);
+            var filter = Builders<Book>.Filter.Eq(item => item.Id, book.Id) & version;
+            var current = await _books.FindOneAndUpdateAsync(transaction, filter, Builders<Book>.Update.Inc(b => b.ReferenceVersion, 1),
+                new FindOneAndUpdateOptions<Book, Book> { ReturnDocument = ReturnDocument.After }, ct);
+            if (current is null) return false;
+            var held = current.MediaType == MediaTypes.Physical
+                ? Math.Max(0, (current.TotalCopies ?? 1) - (current.AvailableCopies ?? (current.IsAvailable ? 1 : 0))) : 0;
+            if (held > 0 && (book.MediaType != current.MediaType || book.TotalCopies < held)) return false;
+            book.AvailableCopies = book.MediaType == MediaTypes.Physical ? book.TotalCopies - held : null;
+            book.IsAvailable = book.MediaType == MediaTypes.Digital || book.AvailableCopies > 0;
+            book.ReferenceVersion = current.ReferenceVersion;
+            return (await _books.ReplaceOneAsync(transaction, b => b.Id == book.Id, book, cancellationToken: ct)).MatchedCount == 1;
+        }, cancellationToken: cancellationToken);
     }
     public async Task<bool> SetActiveAsync(string id, bool active, DateTime updated, CancellationToken token) => (await _books.UpdateOneAsync(book => book.Id == id, Builders<Book>.Update.Set(book => book.IsActive, active).Set(book => book.UpdatedAt, updated), cancellationToken: token)).MatchedCount == 1;
+
+    public async Task<BookMutationResult> DeletePermanentlyAsync(string id, CancellationToken token)
+    {
+        using var session = await _books.Database.Client.StartSessionAsync(cancellationToken: token);
+        return await session.WithTransactionAsync(async (transaction, ct) =>
+        {
+            // A real write serializes this snapshot with every reference insertion.
+            var book = await _books.FindOneAndUpdateAsync(transaction, Builders<Book>.Filter.Eq(b => b.Id, id),
+                Builders<Book>.Update.Inc(b => b.ReferenceVersion, 1),
+                new FindOneAndUpdateOptions<Book, Book> { ReturnDocument = ReturnDocument.After }, ct);
+            if (book is null) return new BookMutationResult(false, "book_not_found");
+            if (book.IsActive) return new BookMutationResult(false, "book_must_be_inactive");
+            if (await _loans.Find(transaction, l => l.BookId == id).AnyAsync(ct) ||
+                await _favorites.Find(transaction, f => f.BookId == id).AnyAsync(ct))
+                return new BookMutationResult(false, "book_has_references");
+            await _books.DeleteOneAsync(transaction, b => b.Id == id, cancellationToken: ct);
+            return new BookMutationResult(true, string.Empty);
+        }, cancellationToken: token);
+    }
 
     public async Task<IReadOnlyList<BookFacetResponse>> GetGenreFacetsAsync(CancellationToken token)
     {

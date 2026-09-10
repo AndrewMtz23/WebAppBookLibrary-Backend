@@ -32,6 +32,9 @@ public class Book
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public int SchemaVersion { get; set; } = BookRules.CurrentSchemaVersion;
 
+    [JsonIgnore]
+    public long ReferenceVersion { get; set; }
+
     // Legacy fields remain readable until the explicit schema migration is applied.
     public string Author { get; set; } = string.Empty;
     public int? Year { get; set; }

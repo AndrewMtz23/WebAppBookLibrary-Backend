@@ -31,7 +31,18 @@ public sealed class MongoFavoriteStore : IFavoriteStore
         var items = await _favorites.Find(filter).SortByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id).Skip((query.Page - 1) * query.PageSize).Limit(query.PageSize).ToListAsync(token);
         return new(items, query.Page, query.PageSize, total);
     }
-    public Task InsertAsync(Favorite favorite, CancellationToken token) => _favorites.InsertOneAsync(favorite, cancellationToken: token);
+    public async Task InsertAsync(Favorite favorite, CancellationToken token)
+    {
+        using var session = await _books.Database.Client.StartSessionAsync(cancellationToken: token);
+        await session.WithTransactionAsync(async (transaction, ct) =>
+        {
+            var changed = await _books.UpdateOneAsync(transaction, b => b.Id == favorite.BookId && b.IsActive,
+                Builders<Book>.Update.Inc(b => b.ReferenceVersion, 1), cancellationToken: ct);
+            if (changed.MatchedCount != 1) throw new BookReferenceUnavailableException();
+            await _favorites.InsertOneAsync(transaction, favorite, cancellationToken: ct);
+            return true;
+        }, cancellationToken: token);
+    }
     public async Task<bool> DeleteAsync(string userId, string bookId, CancellationToken token) =>
         (await _favorites.DeleteOneAsync(item => item.UserId == userId && item.BookId == bookId, token)).DeletedCount == 1;
 }

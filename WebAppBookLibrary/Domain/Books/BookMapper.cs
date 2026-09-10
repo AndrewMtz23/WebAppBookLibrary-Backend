@@ -54,6 +54,7 @@ public static class BookMapper
     {
         var updated = ToNewEntity(request, existing.Id, nowUtc);
         updated.CreatedAt = existing.CreatedAt;
+        updated.ReferenceVersion = existing.ReferenceVersion;
         updated.IsActive = existing.IsActive;
         updated.AvailableCopies = updated.MediaType == MediaTypes.Physical
             ? updated.TotalCopies - activePhysicalLoans

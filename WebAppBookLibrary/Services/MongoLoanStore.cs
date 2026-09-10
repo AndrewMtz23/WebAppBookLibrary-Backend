@@ -61,10 +61,22 @@ public sealed class MongoLoanStore : ILoanStore
         return (await _books.UpdateOneAsync(filter, update, cancellationToken: token)).ModifiedCount == 1;
     }
 
-    public Task InsertLoanAsync(Loan loan, CancellationToken token)
+    public async Task InsertLoanAsync(Loan loan, CancellationToken token)
     {
         loan.ActiveReservationKey = ActiveKey(loan.UserId, loan.BookId);
-        return _loans.InsertOneAsync(loan, cancellationToken: token);
+        using var session = await _books.Database.Client.StartSessionAsync(cancellationToken: token);
+        await session.WithTransactionAsync(async (transaction, ct) =>
+        {
+            var b = Builders<Book>.Filter;
+            var media = loan.MediaType == MediaTypes.Digital ? b.Eq(x => x.MediaType, MediaTypes.Digital)
+                : b.Eq(x => x.MediaType, MediaTypes.Physical) | b.Exists(x => x.MediaType, false);
+            var active = b.Eq(x => x.IsActive, true) | b.Exists(x => x.IsActive, false);
+            var changed = await _books.UpdateOneAsync(transaction, b.Eq(x => x.Id, loan.BookId) & active & media,
+                Builders<Book>.Update.Inc(x => x.ReferenceVersion, 1), cancellationToken: ct);
+            if (changed.MatchedCount != 1) throw new BookReferenceUnavailableException();
+            await _loans.InsertOneAsync(transaction, loan, cancellationToken: ct);
+            return true;
+        }, cancellationToken: token);
     }
 
     public async Task<Loan?> FindLoanAsync(string loanId, CancellationToken token) =>
@@ -276,7 +288,7 @@ public sealed class MongoLoanStore : ILoanStore
             throw new ArgumentException("Loan identifiers must be valid ObjectIds.", nameof(loan));
         }
 
-        return _loans.InsertOneAsync(loan);
+        return InsertLoanAsync(loan, CancellationToken.None);
     }
 
     public async Task<Loan?> FindActiveLoanAsync(string loanId)

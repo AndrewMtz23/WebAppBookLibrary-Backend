@@ -8,6 +8,7 @@ public sealed record BookCatalogEntry(Book Book, long ReservationCount, bool IsF
 
 public interface IBookStore
 {
+    Task<BookMutationResult> DeletePermanentlyAsync(string id, CancellationToken cancellationToken) => throw new NotSupportedException();
     Task<PagedResult<BookCatalogEntry>> SearchAsync(NormalizedBookQuery query, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken);
     Task<BookCatalogEntry?> FindCatalogEntryAsync(string id, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken);
     Task<Book?> FindByIdAsync(string id, CancellationToken cancellationToken);
