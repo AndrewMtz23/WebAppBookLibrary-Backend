@@ -1,10 +1,11 @@
 using WebAppBookLibrary.Domain.Loans;
 using WebAppBookLibrary.Domain.Books;
 using WebAppBookLibrary.Models;
+using System.ComponentModel.DataAnnotations;
 
 namespace WebAppBookLibrary.Contracts.Loans;
 
-public sealed record LoanResponse(string Id, string BookId, string UserId, string MediaType, string Status, DateTime ReservedAt, DateTime? DueAt, DateTime? ReturnedAt, DateTime? CancelledAt, string? Notes)
+public sealed record LoanResponse(string Id, string BookId, string UserId, string MediaType, string Status, DateTime ReservedAt, DateTime? DueAt, DateTime? ReturnedAt, DateTime? CancelledAt, string? Notes, string? BookTitle = null, string? Username = null, string? DisplayName = null)
 {
     public static LoanResponse From(Loan loan, DateTime nowUtc) => new(
         loan.Id, loan.BookId, loan.UserId,
@@ -25,23 +26,38 @@ public sealed record LoanResponse(string Id, string BookId, string UserId, strin
 public sealed record DigitalAccessResponse(string ResourceUrl);
 public sealed record DigitalAccessResult(bool Success, string ErrorCode, string? ResourceUrl = null);
 
-public sealed class LoanQuery
+public sealed class LoanQuery : IValidatableObject
 {
-    public string? Status { get; init; }
-    public string? MediaType { get; init; }
-    public string? UserId { get; init; }
-    public string? BookId { get; init; }
-    public DateTime? From { get; init; }
-    public DateTime? To { get; init; }
-    public int Page { get; init; } = 1;
-    public int PageSize { get; init; } = 20;
+    public const int MaxQueryLength = 200;
+    public string? Query { get; set; }
+    public string? Status { get; set; }
+    public string? MediaType { get; set; }
+    public string? UserId { get; set; }
+    public string? BookId { get; set; }
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    public DateTime? DueFrom { get; set; }
+    public DateTime? DueTo { get; set; }
+    public string DateField { get; set; } = "reservedAt";
+    public string Sort { get; set; } = "reservedAt";
+    public string Direction { get; set; } = "desc";
+    public int Page { get; set; } = 1;
+    public int PageSize { get; set; } = 20;
     public NormalizedLoanQuery Normalize()
     {
         var status = Status?.Trim().ToLowerInvariant();
-        if (status is not (LoanStatuses.Active or LoanStatuses.Overdue or LoanStatuses.Returned or LoanStatuses.Cancelled)) status = null;
+        if (status is not (LoanStatuses.Active or LoanStatuses.Overdue or LoanStatuses.Returned or LoanStatuses.Cancelled or "outstanding")) status = null;
         var media = MediaType?.Trim().ToLowerInvariant();
         if (media is not (MediaTypes.Physical or MediaTypes.Digital)) media = null;
-        return new(status, media, UserId?.Trim(), BookId?.Trim(), From?.ToUniversalTime(), To?.ToUniversalTime(), Math.Max(1, Page), Math.Clamp(PageSize, 1, 100));
+        var text = Query?.Trim(); if (string.IsNullOrEmpty(text)) text = null; else text = text[..Math.Min(text.Length, MaxQueryLength)];
+        var dateField = DateField is "returnedAt" or "cancelledAt" ? DateField : "reservedAt";
+        var sort = Sort == "dueAt" ? "dueAt" : "reservedAt";
+        return new(text, status, media, UserId?.Trim(), BookId?.Trim(), From?.ToUniversalTime(), To?.ToUniversalTime(), DueFrom?.ToUniversalTime(), DueTo?.ToUniversalTime(), dateField, sort, string.Equals(Direction, "asc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc", Math.Max(1, Page), Math.Clamp(PageSize, 1, 100), true);
+    }
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (From > To) yield return new("from must be before to.", [nameof(To)]);
+        if (DueFrom > DueTo) yield return new("dueFrom must be before dueTo.", [nameof(DueTo)]);
     }
 }
-public sealed record NormalizedLoanQuery(string? Status, string? MediaType, string? UserId, string? BookId, DateTime? From, DateTime? To, int Page, int PageSize);
+public sealed record NormalizedLoanQuery(string? Query, string? Status, string? MediaType, string? UserId, string? BookId, DateTime? From, DateTime? To, DateTime? DueFrom, DateTime? DueTo, string DateField, string Sort, string Direction, int Page, int PageSize, bool IncludeIdTieBreaker);

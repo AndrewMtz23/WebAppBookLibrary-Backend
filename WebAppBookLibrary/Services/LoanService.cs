@@ -111,8 +111,8 @@ public class LoanService
 
     public async Task<PagedResult<LoanResponse>> SearchAsync(LoanQuery query, CancellationToken token)
     {
-        var page = await _loanStore.SearchAsync(query.Normalize(), token);
-        return new(page.Items.Select(item => LoanResponse.From(item, DateTime.UtcNow)).ToArray(), page.Page, page.PageSize, page.TotalItems);
+        var page = await _loanStore.SearchDetailsAsync(query.Normalize(), token);
+        return new(page.Items.Select(item => LoanResponse.From(item.Loan, DateTime.UtcNow) with { BookTitle = item.BookTitle, Username = item.Username, DisplayName = item.DisplayName }).ToArray(), page.Page, page.PageSize, page.TotalItems);
     }
 
     public async Task<PagedResult<LoanResponse>?> SearchMineAsync(string username, LoanQuery query, CancellationToken token)

@@ -7,9 +7,11 @@ using WebAppBookLibrary.Security;
 
 namespace WebAppBookLibrary.Services;
 
-public sealed class MongoAdminUserStore(MongoDBService database) : IAdminUserStore
+public sealed class MongoAdminUserStore : IAdminUserStore
 {
-    private readonly IMongoCollection<User> _users = database.Users;
+    private readonly IMongoCollection<User> _users;
+    public MongoAdminUserStore(MongoDBService database) : this(database.Users) { }
+    public MongoAdminUserStore(IMongoCollection<User> users) => _users = users;
 
     public async Task<PagedResult<User>> SearchAsync(AdminUserQuery raw, CancellationToken token)
     {
@@ -23,9 +25,19 @@ public sealed class MongoAdminUserStore(MongoDBService database) : IAdminUserSto
         }
         if (query.Role is not null) filters.Add(builder.Eq(user => user.Role, query.Role));
         if (query.IsActive is not null) filters.Add(builder.Eq(user => user.IsActive, query.IsActive.Value));
+        if (query.CreatedFrom is not null) filters.Add(builder.Gte(user => user.CreatedAt, query.CreatedFrom.Value));
+        if (query.CreatedTo is not null) filters.Add(builder.Lt(user => user.CreatedAt, query.CreatedTo.Value));
+        if (query.LastLoginFrom is not null) filters.Add(builder.Gte(user => user.LastLoginAt, query.LastLoginFrom.Value));
+        if (query.LastLoginTo is not null) filters.Add(builder.Lt(user => user.LastLoginAt, query.LastLoginTo.Value));
         var filter = filters.Count == 0 ? builder.Empty : builder.And(filters);
         var total = await _users.CountDocumentsAsync(filter, cancellationToken: token);
-        var users = await _users.Find(filter).SortBy(user => user.Username).ThenBy(user => user.Id).Skip((query.Page - 1) * query.PageSize).Limit(query.PageSize).ToListAsync(token);
+        var offset = ((long)query.Page - 1) * query.PageSize;
+        if (offset >= total) return new([], query.Page, query.PageSize, total);
+        var field = query.Sort switch { "createdAt" => "CreatedAt", "lastLoginAt" => "LastLoginAt", "role" => "Role", _ => "Username" };
+        var sort = query.Direction == "desc" ? Builders<User>.Sort.Descending(field).Descending(user => user.Id) : Builders<User>.Sort.Ascending(field).Ascending(user => user.Id);
+        var users = offset <= int.MaxValue
+            ? await _users.Find(filter).Sort(sort).Skip((int)offset).Limit(query.PageSize).ToListAsync(token)
+            : await _users.Aggregate().Match(filter).Sort(sort).Skip(offset).Limit(query.PageSize).ToListAsync(token);
         return new(users, query.Page, query.PageSize, total);
     }
 

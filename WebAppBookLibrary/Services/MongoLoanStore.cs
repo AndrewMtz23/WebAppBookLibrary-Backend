@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using WebAppBookLibrary.Domain.Books;
 using WebAppBookLibrary.Domain.Loans;
@@ -128,18 +129,97 @@ public sealed class MongoLoanStore : ILoanStore
 
     public async Task<PagedResult<Loan>> SearchAsync(NormalizedLoanQuery query, CancellationToken token)
     {
-        var builder = Builders<Loan>.Filter;
-        var filters = new List<FilterDefinition<Loan>>();
-        if (query.Status is not null) filters.Add(builder.Eq(loan => loan.Status, query.Status));
-        if (query.MediaType is not null) filters.Add(builder.Eq(loan => loan.MediaType, query.MediaType));
-        if (!string.IsNullOrWhiteSpace(query.UserId)) filters.Add(builder.Eq(loan => loan.UserId, query.UserId));
-        if (!string.IsNullOrWhiteSpace(query.BookId)) filters.Add(builder.Eq(loan => loan.BookId, query.BookId));
-        if (query.From is not null) filters.Add(builder.Gte(loan => loan.ReservedAt, query.From.Value));
-        if (query.To is not null) filters.Add(builder.Lt(loan => loan.ReservedAt, query.To.Value));
-        var filter = filters.Count == 0 ? builder.Empty : builder.And(filters);
-        var total = await _loans.CountDocumentsAsync(filter, cancellationToken: token);
-        var items = await _loans.Find(filter).SortByDescending(loan => loan.ReservedAt).ThenByDescending(loan => loan.Id).Skip((query.Page - 1) * query.PageSize).Limit(query.PageSize).ToListAsync(token);
+        // Compute the same read-time values as LoanResponse.From before filtering,
+        // sorting and counting. Keep persisted fields untouched for deserialization.
+        var pipeline = new List<BsonDocument>
+        {
+            BsonDocument.Parse("""
+            { "$set": {
+                "_legacyMedia": { "$regexMatch": { "input": { "$ifNull": ["$MediaType", ""] }, "regex": "^\\s*$" } },
+                "_legacyStatus": { "$regexMatch": { "input": { "$ifNull": ["$Status", ""] }, "regex": "^\\s*$" } },
+                "_reservedAt": { "$cond": [
+                    { "$or": [ { "$eq": [{ "$ifNull": ["$ReservedAt", null] }, null] }, { "$eq": ["$ReservedAt", { "$date": "0001-01-01T00:00:00Z" }] } ] },
+                    { "$ifNull": ["$LoanDate", "$$NOW"] }, "$ReservedAt"] },
+                "_returnedAt": { "$ifNull": ["$ReturnedAt", "$ReturnDate"] }
+            } }
+            """),
+            BsonDocument.Parse("""
+            { "$set": {
+                "_mediaType": { "$cond": ["$_legacyMedia", "physical", "$MediaType"] },
+                "_dueAt": { "$ifNull": ["$DueAt", { "$cond": ["$_legacyMedia", { "$add": [{ "$ifNull": ["$LoanDate", "$$NOW"] }, 1209600000] }, null] }] }
+            } }
+            """),
+            BsonDocument.Parse("""
+            { "$set": { "_status": { "$cond": ["$_legacyStatus",
+                { "$cond": [{ "$eq": ["$IsReturned", true] }, "returned",
+                    { "$cond": [{ "$and": [{ "$ne": ["$_dueAt", null] }, { "$lt": ["$_dueAt", "$$NOW"] }] }, "overdue", "active"] }] },
+                { "$cond": [{ "$and": [{ "$eq": ["$Status", "active"] }, { "$ne": [{ "$ifNull": ["$DueAt", null] }, null] }, { "$lt": ["$DueAt", "$$NOW"] }] }, "overdue", "$Status"] }
+            ] } } }
+            """)
+        };
+        var filters = new BsonArray();
+        if (query.Status == "outstanding") filters.Add(new BsonDocument("_status", new BsonDocument("$in", new BsonArray { "active", "overdue" })));
+        else if (query.Status is not null) filters.Add(new BsonDocument("_status", query.Status));
+        if (query.MediaType is not null) filters.Add(new BsonDocument("_mediaType", query.MediaType));
+        if (!string.IsNullOrWhiteSpace(query.UserId)) filters.Add(new BsonDocument("UserId", query.UserId));
+        if (!string.IsNullOrWhiteSpace(query.BookId)) filters.Add(new BsonDocument("BookId", query.BookId));
+        var dateField = query.DateField switch { "returnedAt" => "_returnedAt", "cancelledAt" => "CancelledAt", _ => "_reservedAt" };
+        if (query.From is not null) filters.Add(new BsonDocument(dateField, new BsonDocument("$gte", query.From.Value)));
+        if (query.To is not null) filters.Add(new BsonDocument(dateField, new BsonDocument("$lt", query.To.Value)));
+        if (query.DueFrom is not null) filters.Add(new BsonDocument("_dueAt", new BsonDocument("$gte", query.DueFrom.Value)));
+        if (query.DueTo is not null) filters.Add(new BsonDocument("_dueAt", new BsonDocument("$lt", query.DueTo.Value)));
+        if (filters.Count > 0) pipeline.Add(new BsonDocument("$match", new BsonDocument("$and", filters)));
+        if (query.Query is not null)
+        {
+            var escaped = System.Text.RegularExpressions.Regex.Escape(query.Query);
+            var regex = new BsonRegularExpression(escaped, "i");
+            pipeline.Add(Lookup(_books.CollectionNamespace.CollectionName, "BookId", "_book", new BsonDocument("Title", 1)));
+            pipeline.Add(Lookup(_users.CollectionNamespace.CollectionName, "UserId", "_user", new BsonDocument { { "Username", 1 }, { "DisplayName", 1 } }));
+            pipeline.Add(new BsonDocument("$match", new BsonDocument("$or", new BsonArray
+            {
+                new BsonDocument("_book.Title", regex), new BsonDocument("_user.Username", regex), new BsonDocument("_user.DisplayName", regex),
+                new BsonDocument("$expr", new BsonDocument("$regexMatch", new BsonDocument { { "input", new BsonDocument("$toString", "$_id") }, { "regex", escaped }, { "options", "i" } }))
+            })));
+        }
+        var direction = query.Direction == "asc" ? 1 : -1;
+        var sortField = query.Sort == "dueAt" ? "_dueAt" : "_reservedAt";
+        pipeline.Add(new BsonDocument("$facet", new BsonDocument
+        {
+            { "metadata", new BsonArray { new BsonDocument("$count", "total") } },
+            { "items", new BsonArray {
+                new BsonDocument("$sort", new BsonDocument { { sortField, direction }, { "_id", direction } }),
+                new BsonDocument("$skip", ((long)query.Page - 1) * query.PageSize),
+                new BsonDocument("$limit", query.PageSize),
+                new BsonDocument("$unset", new BsonArray { "_book", "_user", "_legacyMedia", "_legacyStatus", "_reservedAt", "_returnedAt", "_mediaType", "_dueAt", "_status" }) }
+            }
+        }));
+        var result = await _loans.Aggregate<BsonDocument>(pipeline).FirstOrDefaultAsync(token);
+        var total = result?["metadata"].AsBsonArray.FirstOrDefault()?.AsBsonDocument.GetValue("total", 0).ToInt64() ?? 0;
+        var items = result is null ? [] : result["items"].AsBsonArray.Select(value => BsonSerializer.Deserialize<Loan>(value.AsBsonDocument)).ToArray();
         return new(items, query.Page, query.PageSize, total);
+    }
+
+    private static BsonDocument Lookup(string collection, string localIdField, string output, BsonDocument projection) =>
+        new("$lookup", new BsonDocument
+        {
+            { "from", collection }, { "let", new BsonDocument("localId", "$" + localIdField) },
+            { "pipeline", new BsonArray { new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$eq", new BsonArray { new BsonDocument("$toString", "$_id"), "$$localId" }))), new BsonDocument("$project", projection) } },
+            { "as", output }
+        });
+
+    public async Task<PagedResult<LoanSearchEntry>> SearchDetailsAsync(NormalizedLoanQuery query, CancellationToken token)
+    {
+        var page = await SearchAsync(query, token);
+        var bookIds = page.Items.Select(item => item.BookId).Distinct().ToArray();
+        var userIds = page.Items.Select(item => item.UserId).Distinct().ToArray();
+        var books = await _books.Find(Builders<Book>.Filter.In(book => book.Id, bookIds)).Project(book => new { book.Id, book.Title }).ToListAsync(token);
+        var users = await _users.Find(Builders<User>.Filter.In(user => user.Id, userIds)).Project(user => new { user.Id, user.Username, user.DisplayName }).ToListAsync(token);
+        var bookNames = books.ToDictionary(item => item.Id, item => item.Title);
+        var userNames = users.ToDictionary(item => item.Id);
+        var entries = page.Items.Select(loan => userNames.TryGetValue(loan.UserId, out var user)
+            ? new LoanSearchEntry(loan, bookNames.GetValueOrDefault(loan.BookId), user.Username, user.DisplayName)
+            : new LoanSearchEntry(loan, bookNames.GetValueOrDefault(loan.BookId), null, null)).ToArray();
+        return new(entries, page.Page, page.PageSize, page.TotalItems);
     }
 
     public async Task<Book?> ReserveAvailableBookAsync(string bookId, string loanId)
