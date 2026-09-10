@@ -10,50 +10,76 @@ namespace WebAppBookLibrary.Services;
 
 public sealed class MongoBookStore : IBookStore
 {
+    // Conservative structural check, executed by Mongo so counts and pages agree.
+    // Recognizes international DNS hosts, userinfo and IPv6, with ports 0..65535.
+    // Deliberately does not claim network reachability or full System.Uri parity.
+    private const string HttpsResourcePattern = @"^https://(?:[^\s/@?#\\]*@)?(?:[\p{L}\p{N}_](?:[\p{L}\p{N}\p{M}_-]*[\p{L}\p{N}\p{M}_])?(?:\.[\p{L}\p{N}_](?:[\p{L}\p{N}\p{M}_-]*[\p{L}\p{N}\p{M}_])?)*\.?|\[(?:(?:[a-f0-9]{1,4}:){7}[a-f0-9]{1,4}|(?:[a-f0-9]{1,4}:){1,7}:|(?:[a-f0-9]{1,4}:){1,6}:[a-f0-9]{1,4}|(?:[a-f0-9]{1,4}:){1,5}(?::[a-f0-9]{1,4}){1,2}|(?:[a-f0-9]{1,4}:){1,4}(?::[a-f0-9]{1,4}){1,3}|(?:[a-f0-9]{1,4}:){1,3}(?::[a-f0-9]{1,4}){1,4}|(?:[a-f0-9]{1,4}:){1,2}(?::[a-f0-9]{1,4}){1,5}|[a-f0-9]{1,4}:(?:(?::[a-f0-9]{1,4}){1,6})|:(?:(?::[a-f0-9]{1,4}){1,7}|:))\])(?::0*(?:[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(?:[/?#][\s\S]*)?$";
     private readonly IMongoCollection<Book> _books;
     private readonly IMongoCollection<Loan> _loans;
     private readonly IMongoCollection<Favorite> _favorites;
     private readonly IMongoCollection<User> _users;
     public MongoBookStore(MongoDBService database)
+        : this(database.Books, database.Loans, database.Favorites, database.Users) { }
+    public MongoBookStore(IMongoCollection<Book> books, IMongoCollection<Loan> loans, IMongoCollection<Favorite> favorites, IMongoCollection<User> users)
     {
-        _books = database.Books;
-        _loans = database.Loans;
-        _favorites = database.Favorites;
-        _users = database.Users;
+        _books = books; _loans = loans; _favorites = favorites; _users = users;
     }
 
     public async Task<PagedResult<BookCatalogEntry>> SearchAsync(NormalizedBookQuery query, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken)
     {
-        var builder = Builders<Book>.Filter;
-        var filters = new List<FilterDefinition<Book>>();
-        if (!includeInactive) filters.Add(builder.Or(builder.Eq(book => book.IsActive, true), builder.Exists(book => book.IsActive, false)));
-        if (query.Query is not null) filters.Add(builder.Text(query.Query));
-        if (query.Genre is not null) filters.Add(builder.AnyEq(book => book.Genres, query.Genre));
-        if (query.MediaType is not null)
-            filters.Add(query.MediaType == MediaTypes.Physical
-                ? builder.Or(builder.Eq(book => book.MediaType, query.MediaType), builder.Exists(book => book.MediaType, false))
-                : builder.Eq(book => book.MediaType, query.MediaType));
-        if (query.Language is not null) filters.Add(builder.Eq(book => book.Language, query.Language));
-        if (query.Available is not null)
-        {
-            var available = builder.Or(
-                builder.Eq(book => book.MediaType, MediaTypes.Digital),
-                builder.Gt(book => book.AvailableCopies, 0),
-                builder.And(builder.Exists(book => book.AvailableCopies, false), builder.Eq(book => book.IsAvailable, true)));
-            filters.Add(query.Available.Value ? available : builder.Not(available));
-        }
-        var filter = filters.Count == 0 ? builder.Empty : builder.And(filters);
+        FilterDefinition<Book> filter = RenderFilter(query, includeInactive);
         var total = await _books.CountDocumentsAsync(filter, cancellationToken: cancellationToken);
+        var offset = ((long)query.Page - 1) * query.PageSize;
+        if (offset >= total) return new([], query.Page, query.PageSize, total);
         if (query.Sort == "reservationCount")
             return await SearchByPopularityAsync(filter, query, viewerUsername, total, cancellationToken);
         var field = query.Sort switch { "title" => "Title", "publishedDate" => "PublishedDate", _ => "CreatedAt" };
         var sort = query.Sort == "relevance"
             ? Builders<Book>.Sort.MetaTextScore("score").Ascending(book => book.Id)
             : query.Direction == "asc" ? Builders<Book>.Sort.Ascending(field).Ascending(book => book.Id) : Builders<Book>.Sort.Descending(field).Descending(book => book.Id);
-        var books = await _books.Find(filter).Sort(sort).Skip((query.Page - 1) * query.PageSize).Limit(query.PageSize).ToListAsync(cancellationToken);
+        var books = offset <= int.MaxValue
+            ? await _books.Find(filter).Sort(sort).Skip((int)offset).Limit(query.PageSize).ToListAsync(cancellationToken)
+            : await _books.Aggregate().Match(filter).Sort(sort).Skip(offset).Limit(query.PageSize).ToListAsync(cancellationToken);
         var counts = await ReservationCountsAsync(books.Select(book => book.Id), cancellationToken);
         var favoriteIds = await FavoriteBookIdsAsync(viewerUsername, books.Select(book => book.Id), cancellationToken);
         return new(books.Select(book => new BookCatalogEntry(book, counts.GetValueOrDefault(book.Id), favoriteIds.Contains(book.Id))).ToArray(), query.Page, query.PageSize, total);
+    }
+
+    public static BsonDocument RenderFilter(NormalizedBookQuery query, bool includeInactive)
+    {
+        var builder = Builders<Book>.Filter;
+        var filters = new List<FilterDefinition<Book>>();
+        if (!includeInactive) filters.Add(builder.Or(builder.Eq(book => book.IsActive, true), builder.Exists(book => book.IsActive, false)));
+        else if (query.IsActive is not null) filters.Add(builder.Eq(book => book.IsActive, query.IsActive.Value));
+        if (query.Query is not null)
+        {
+            if (query.Sort == "relevance") filters.Add(builder.Text(query.Query));
+            else
+            {
+                var regex = new BsonRegularExpression(System.Text.RegularExpressions.Regex.Escape(query.Query), "i");
+                filters.Add(builder.Or(builder.Regex(book => book.Title, regex), builder.Regex(book => book.Subtitle, regex), builder.Regex(book => book.Isbn, regex), builder.AnyStringIn(book => book.Authors, regex)));
+            }
+        }
+        if (query.Genre is not null) filters.Add(builder.AnyEq(book => book.Genres, query.Genre));
+        if (query.MediaType is not null) filters.Add(query.MediaType == MediaTypes.Physical ? builder.Or(builder.Eq(book => book.MediaType, query.MediaType), builder.Exists(book => book.MediaType, false)) : builder.Eq(book => book.MediaType, query.MediaType));
+        if (query.Language is not null) filters.Add(builder.Eq(book => book.Language, query.Language));
+        if (query.Available is not null)
+        {
+            var available = builder.Or(builder.Eq(book => book.MediaType, MediaTypes.Digital), builder.Gt(book => book.AvailableCopies, 0), builder.And(builder.Exists(book => book.AvailableCopies, false), builder.Eq(book => book.IsAvailable, true)));
+            filters.Add(query.Available.Value ? available : builder.Not(available));
+        }
+        if (includeInactive && query.LowStock is not null)
+        {
+            var low = builder.And(builder.Eq(book => book.IsActive, true), builder.Eq(book => book.MediaType, MediaTypes.Physical), builder.Eq(book => book.AvailableCopies, 1));
+            filters.Add(query.LowStock.Value ? low : builder.Not(low));
+        }
+        if (includeInactive && query.MissingResource is not null)
+        {
+            var missing = builder.And(builder.Eq(book => book.IsActive, true), builder.Eq(book => book.MediaType, MediaTypes.Digital), builder.Not(builder.Regex(book => book.DigitalResourceUrl, new BsonRegularExpression(HttpsResourcePattern, "i"))));
+            filters.Add(query.MissingResource.Value ? missing : builder.Not(missing));
+        }
+        var filter = filters.Count == 0 ? builder.Empty : builder.And(filters);
+        return filter.Render(new RenderArgs<Book>(BsonSerializer.SerializerRegistry.GetSerializer<Book>(), BsonSerializer.SerializerRegistry));
     }
 
     public async Task<BookCatalogEntry?> FindCatalogEntryAsync(string id, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken)
@@ -144,7 +170,7 @@ public sealed class MongoBookStore : IBookStore
                 0
             }))),
             new BsonDocument("$sort", new BsonDocument { { "_reservationCount", direction }, { "_id", direction } }),
-            new BsonDocument("$skip", (query.Page - 1) * query.PageSize),
+            new BsonDocument("$skip", ((long)query.Page - 1) * query.PageSize),
             new BsonDocument("$limit", query.PageSize)
         };
         var documents = await _books.Aggregate<BsonDocument>(pipeline).ToListAsync(token);

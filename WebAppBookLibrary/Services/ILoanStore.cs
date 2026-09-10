@@ -15,6 +15,11 @@ public interface ILoanStore
     Task<bool> TransitionAsync(string loanId, IReadOnlyCollection<string> allowedStatuses, string nextStatus, DateTime changedAtUtc, CancellationToken cancellationToken);
     Task<bool> CompletePhysicalAsync(string loanId, string bookId, string nextStatus, DateTime changedAtUtc, CancellationToken cancellationToken);
     Task<PagedResult<Loan>> SearchAsync(NormalizedLoanQuery query, CancellationToken cancellationToken);
+    async Task<PagedResult<LoanSearchEntry>> SearchDetailsAsync(NormalizedLoanQuery query, CancellationToken cancellationToken)
+    {
+        var page = await SearchAsync(query, cancellationToken);
+        return new(page.Items.Select(loan => new LoanSearchEntry(loan, null, null, null)).ToArray(), page.Page, page.PageSize, page.TotalItems);
+    }
 
     Task<Book?> ReserveAvailableBookAsync(string bookId, string loanId);
 
@@ -37,3 +42,5 @@ public interface ILoanStore
 
     Task<bool> DeleteLoanAsync(string loanId);
 }
+
+public sealed record LoanSearchEntry(Loan Loan, string? BookTitle, string? Username, string? DisplayName);

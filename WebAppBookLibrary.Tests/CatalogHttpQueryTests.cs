@@ -51,13 +51,16 @@ public sealed class CatalogHttpQueryTests
         await app.StartAsync();
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
 
-        var response = await client.GetFromJsonAsync<PagedResult<BookSummaryResponse>>("/api/books?query=Frankenstein&mediaType=digital&pageSize=5&sort=relevance");
+        var response = await client.GetFromJsonAsync<PagedResult<BookSummaryResponse>>("/api/books?query=Frankenstein&mediaType=digital&isActive=false&lowStock=true&missingResource=true&pageSize=5&sort=relevance");
 
         Assert.NotNull(received);
         Assert.Equal("Frankenstein", received.Query);
         Assert.Equal("digital", received.MediaType);
         Assert.Equal(5, received.PageSize);
         Assert.Equal("relevance", received.Sort);
+        Assert.False(received.IsActive);
+        Assert.True(received.LowStock);
+        Assert.True(received.MissingResource);
         Assert.Equal("Frankenstein", Assert.Single(response!.Items).Title);
     }
 }

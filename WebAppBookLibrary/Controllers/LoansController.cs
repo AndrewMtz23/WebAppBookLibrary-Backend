@@ -66,7 +66,7 @@ public class LoansController : ControllerBase
 
     [HttpGet("my")]
     [Authorize(Policy = PolicyNames.BorrowBooks)]
-    public async Task<IActionResult> GetMyLoans([FromQuery] LoanQuery query, CancellationToken token)
+    public async Task<IActionResult> GetMyLoans([FromQuery(Name = "")] LoanQuery query, CancellationToken token)
     {
         var username = User.Identity?.Name ?? string.Empty;
         var loans = await _loanService.SearchMineAsync(username, query, token);
@@ -75,7 +75,7 @@ public class LoansController : ControllerBase
 
     [HttpGet]
     [Authorize(Policy = PolicyNames.ViewAllLoans)]
-    public async Task<IActionResult> GetAllLoans([FromQuery] LoanQuery query, CancellationToken token)
+    public async Task<IActionResult> GetAllLoans([FromQuery(Name = "")] LoanQuery query, CancellationToken token)
     {
         return Ok(await _loanService.SearchAsync(query, token));
     }

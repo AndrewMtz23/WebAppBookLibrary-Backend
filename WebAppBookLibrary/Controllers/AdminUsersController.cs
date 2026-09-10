@@ -18,7 +18,7 @@ public sealed class AdminUsersController : ControllerBase
     private readonly Logservice log;
     public AdminUsersController(AdminUserService service, Logservice log) { this.service = service; this.log = log; }
     [HttpGet]
-    public async Task<IActionResult> Search([FromQuery] AdminUserQuery query, CancellationToken token) => Ok(await service.SearchAsync(query, token));
+    public async Task<IActionResult> Search([FromQuery(Name = "")] AdminUserQuery query, CancellationToken token) => Ok(await service.SearchAsync(query, token));
 
     [HttpGet("{id}")]
     public async Task<IActionResult> Get(string id, CancellationToken token)
