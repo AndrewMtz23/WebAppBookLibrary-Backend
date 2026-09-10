@@ -50,6 +50,27 @@ public class BooksController : ControllerBase
         return Ok(book);
     }
 
+    [HttpGet("{id}/management")]
+    [Authorize(Policy = PolicyNames.ManageBooks)]
+    public async Task<IActionResult> GetManagement(string id, CancellationToken cancellationToken)
+    {
+        if (!ObjectId.TryParse(id, out _)) return ApiProblemFactory.Result(400, "Invalid book identifier");
+        var book = await _bookService.GetManagementAsync(id, cancellationToken);
+        return book is null ? ApiProblemFactory.Result(404, "Book not found") : Ok(book);
+    }
+
+    [HttpDelete("{id}/permanent")]
+    [Authorize(Policy = PolicyNames.DeleteBooks)]
+    public async Task<IActionResult> DeletePermanently(string id, CancellationToken cancellationToken)
+    {
+        if (!ObjectId.TryParse(id, out _)) return ApiProblemFactory.Result(400, "Invalid book identifier");
+        var result = await _bookService.DeletePermanentlyAsync(id, cancellationToken);
+        if (!result.Success)
+            return result.ErrorCode == "book_not_found" ? ApiProblemFactory.Result(404, "Book not found") : BookProblem(409, "Book cannot be permanently deleted", result.ErrorCode);
+        if (_logService is not null) await _logService.BookChangedAsync("permanently_deleted", User.Identity?.Name ?? string.Empty, id);
+        return NoContent();
+    }
+
     [HttpPost]
     [Authorize(Policy = PolicyNames.ManageBooks)]
     public async Task<IActionResult> Create([FromBody] BookWriteRequest request, CancellationToken cancellationToken)

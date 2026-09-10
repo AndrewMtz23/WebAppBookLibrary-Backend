@@ -7,6 +7,8 @@ namespace WebAppBookLibrary.Services
     {
         public IMongoDatabase _database { get; }
 
+        public MongoDBService(IMongoDatabase database) => _database = database ?? throw new ArgumentNullException(nameof(database));
+
         public MongoDBService(IConfiguration configuration)
         {
             try
