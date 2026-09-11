@@ -30,6 +30,30 @@ public sealed class MongoLoanStore : ILoanStore
         _users = users;
     }
 
+    public async Task<LoanSearchEntry?> FindDetailAsync(string id, CancellationToken token)
+    {
+        var loan = await FindLoanAsync(id, token);
+        if (loan is null) return null;
+        var title = ObjectId.TryParse(loan.BookId, out _) ? await _books.Find(b => b.Id == loan.BookId).Project(b => b.Title).FirstOrDefaultAsync(token) : null;
+        var user = ObjectId.TryParse(loan.UserId, out _) ? await _users.Find(u => u.Id == loan.UserId).Project(u => new { u.Username, u.DisplayName }).FirstOrDefaultAsync(token) : null;
+        return new(loan, title, user?.Username, user?.DisplayName);
+    }
+
+    public async Task<LoanHistoryPage> ReadHistoryAsync(string id, CancellationToken token)
+    {
+        var logs = _loans.Database.GetCollection<LogEntry>("LogEntries");
+        // Historic commands may have recorded the caller's ObjectId casing in TargetId.
+        var target = new BsonRegularExpression("^" + System.Text.RegularExpressions.Regex.Escape(id) + "$", "i");
+        var filter = Builders<LogEntry>.Filter.Eq(e => e.TargetType, "loan") & Builders<LogEntry>.Filter.Regex(e => e.TargetId, target)
+            & Builders<LogEntry>.Filter.In(e => e.EventType, new[] { "loan.created", "loan.returned", "loan.cancelled" })
+            & Builders<LogEntry>.Filter.Gt(e => e.Timestamp, DateTime.MinValue);
+        var rows = await logs.Find(filter).SortByDescending(e => e.Timestamp).ThenByDescending(e => e.Id).Limit(51)
+            .Project(e => new { e.EventType, e.Timestamp, e.ActorUsername }).ToListAsync(token);
+        return new(rows.Take(50).Select(e => new LoanTransitionResponse(e.EventType![5..], e.Timestamp, SafeActor(e.ActorUsername), "audit")).ToArray(), rows.Count > 50);
+    }
+
+    private static string? SafeActor(string? actor) => string.IsNullOrWhiteSpace(actor) ? null : new string(actor.Where(c => !char.IsControl(c)).Take(100).ToArray());
+
     public async Task<Book?> FindActiveBookAsync(string bookId, CancellationToken token)
     {
         var active = Builders<Book>.Filter.Eq(book => book.IsActive, true) | Builders<Book>.Filter.Exists(book => book.IsActive, false);
@@ -41,7 +65,7 @@ public sealed class MongoLoanStore : ILoanStore
         var key = ActiveKey(userId, bookId);
         var builder = Builders<Loan>.Filter;
         var activeState = builder.In(loan => loan.Status, [LoanStatuses.Active, LoanStatuses.Overdue]) |
-                          (builder.Exists(loan => loan.Status, false) & builder.Eq(loan => loan.IsReturned, false));
+                          ((builder.Exists(loan => loan.Status, false) | builder.Eq(loan => loan.Status, null) | builder.Regex(loan => loan.Status, new BsonRegularExpression("^\\s*$"))) & builder.Eq(loan => loan.IsReturned, false));
         var filter = builder.Eq(loan => loan.ActiveReservationKey, key) |
                      (builder.Eq(loan => loan.UserId, userId) & builder.Eq(loan => loan.BookId, bookId) & activeState);
         return await _loans.Find(filter).AnyAsync(token);
@@ -86,7 +110,7 @@ public sealed class MongoLoanStore : ILoanStore
     {
         var builder = Builders<Loan>.Filter;
         var activeState = builder.In(loan => loan.Status, allowedStatuses) |
-                          (builder.Exists(loan => loan.Status, false) & builder.Eq(loan => loan.IsReturned, false));
+                          ((builder.Exists(loan => loan.Status, false) | builder.Eq(loan => loan.Status, null) | builder.Regex(loan => loan.Status, new BsonRegularExpression("^\\s*$"))) & builder.Eq(loan => loan.IsReturned, false));
         var filter = builder.Eq(loan => loan.Id, loanId) & activeState;
         var update = Builders<Loan>.Update.Set(loan => loan.Status, nextStatus).Set(loan => loan.ActiveReservationKey, null);
         update = nextStatus == LoanStatuses.Returned
@@ -103,7 +127,7 @@ public sealed class MongoLoanStore : ILoanStore
         {
             var builder = Builders<Loan>.Filter;
             var activeState = builder.In(loan => loan.Status, [LoanStatuses.Active, LoanStatuses.Overdue]) |
-                              (builder.Exists(loan => loan.Status, false) & builder.Eq(loan => loan.IsReturned, false));
+                              ((builder.Exists(loan => loan.Status, false) | builder.Eq(loan => loan.Status, null) | builder.Regex(loan => loan.Status, new BsonRegularExpression("^\\s*$"))) & builder.Eq(loan => loan.IsReturned, false));
             var loanFilter = builder.Eq(loan => loan.Id, loanId) & activeState;
             var loanUpdate = Builders<Loan>.Update.Set(loan => loan.Status, nextStatus).Set(loan => loan.ActiveReservationKey, null);
             loanUpdate = nextStatus == LoanStatuses.Returned

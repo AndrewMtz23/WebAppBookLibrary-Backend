@@ -80,6 +80,15 @@ public class LoansController : ControllerBase
         return Ok(await _loanService.SearchAsync(query, token));
     }
 
+    [HttpGet("{id}")]
+    [Authorize(Policy = PolicyNames.ViewAllLoans)]
+    public async Task<IActionResult> GetLoan(string id, CancellationToken token)
+    {
+        if (!ObjectId.TryParse(id, out _)) return LoanProblem(400, "Invalid loan identifier", "invalid_identifier");
+        var detail = await _loanService.GetDetailAsync(id, token);
+        return detail is null ? LoanProblem(404, "Loan not found", LoanOperationErrorCodes.LoanNotFound) : Ok(detail);
+    }
+
     [HttpPut("{id}/return")]
     public async Task<IActionResult> ReturnLoan(string id, CancellationToken cancellationToken)
     {
