@@ -6,6 +6,13 @@ namespace WebAppBookLibrary.Services;
 
 public interface ILoanStore
 {
+    async Task<LoanSearchEntry?> FindDetailAsync(string id, CancellationToken token)
+    {
+        var loan = await FindLoanAsync(id, token);
+        return loan is null ? null : new(loan, null, null, null);
+    }
+    Task<LoanHistoryPage> ReadHistoryAsync(string id, CancellationToken token) => Task.FromResult(new LoanHistoryPage([], false));
+
     Task<Book?> FindActiveBookAsync(string bookId, CancellationToken cancellationToken);
     Task<bool> HasActiveReservationAsync(string userId, string bookId, CancellationToken cancellationToken);
     Task<bool> TryDecrementPhysicalInventoryAsync(string bookId, DateTime updatedAtUtc, CancellationToken cancellationToken);

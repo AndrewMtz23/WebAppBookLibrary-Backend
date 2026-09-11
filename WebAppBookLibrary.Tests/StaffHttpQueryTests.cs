@@ -130,8 +130,8 @@ public sealed class StaffHttpQueryTests
         store.Verify(x => x.SearchAsync(It.IsAny<AdminUserQuery>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    private static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
-    private static async Task<WebApplication> StartApp(Action<IServiceCollection> register, string role)
+    internal static HttpClient Client(WebApplication app) => new() { BaseAddress = new Uri(app.Urls.Single()) };
+    internal static async Task<WebApplication> StartApp(Action<IServiceCollection> register, string role)
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();

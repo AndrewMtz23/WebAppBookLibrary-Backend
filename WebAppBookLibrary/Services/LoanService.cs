@@ -109,6 +109,24 @@ public class LoanService
         return new(true, string.Empty, book.DigitalResourceUrl);
     }
 
+    public async Task<LoanDetailResponse?> GetDetailAsync(string id, CancellationToken token)
+    {
+        var entry = await _loanStore.FindDetailAsync(id, token);
+        if (entry is null) return null;
+        var loan = LoanResponse.From(entry.Loan, DateTime.UtcNow) with { BookTitle = entry.BookTitle, Username = entry.Username, DisplayName = entry.DisplayName, Notes = null };
+        var audit = await _loanStore.ReadHistoryAsync(id, token);
+        var history = audit.Events.ToList();
+        void Recorded(string type, DateTime? date)
+        {
+            if (date is { } timestamp && timestamp != default && !history.Any(e => e.EventType == type))
+                history.Add(new(type, timestamp, null, "recorded-date"));
+        }
+        Recorded("created", loan.ReservedAt);
+        Recorded("returned", loan.ReturnedAt);
+        Recorded("cancelled", loan.CancelledAt);
+        return new(loan, history.OrderBy(e => e.Timestamp).ToArray(), audit.Truncated);
+    }
+
     public async Task<PagedResult<LoanResponse>> SearchAsync(LoanQuery query, CancellationToken token)
     {
         var page = await _loanStore.SearchDetailsAsync(query.Normalize(), token);
@@ -132,8 +150,9 @@ public class LoanService
         var loan = await _loanStore.FindLoanAsync(loanId, token);
         if (loan is null) return Failure(LoanOperationErrorCodes.LoanNotFound);
         if (!CanReturn(loan, user, callerRole)) return Failure(LoanOperationErrorCodes.Forbidden);
-        if (loan.Status == nextStatus) return new(true, string.Empty, loan, true);
-        if (!LoanRules.CanTransition(LoanRules.EffectiveStatus(loan.Status, loan.DueAt, nowUtc), nextStatus))
+        var effectiveStatus = LoanResponse.From(loan, nowUtc).Status;
+        if (effectiveStatus == nextStatus) return new(true, string.Empty, loan, true);
+        if (!LoanRules.CanTransition(effectiveStatus, nextStatus))
             return Failure(LoanOperationErrorCodes.InvalidTransition);
 
         var isPhysical = string.IsNullOrWhiteSpace(loan.MediaType) || loan.MediaType == MediaTypes.Physical;
@@ -144,6 +163,7 @@ public class LoanService
         {
             var current = await _loanStore.FindLoanAsync(loanId, CancellationToken.None);
             if (current?.Status == nextStatus) return new(true, string.Empty, current, true);
+            if (current is not null && !LoanRules.CanTransition(LoanResponse.From(current, nowUtc).Status, nextStatus)) return Failure(LoanOperationErrorCodes.InvalidTransition);
             return isPhysical
                 ? Failure(LoanOperationErrorCodes.BookRestoreFailed)
                 : Failure(LoanOperationErrorCodes.InvalidTransition);
