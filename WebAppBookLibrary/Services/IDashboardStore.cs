@@ -9,4 +9,5 @@ public interface IDashboardStore
     Task<ReaderDashboardResponse> ReaderAsync(string userId, DashboardPeriod period, CancellationToken token);
     Task<LibrarianDashboardResponse> LibrarianAsync(DashboardPeriod period, CancellationToken token);
     Task<AdminDashboardResponse> AdminAsync(DashboardPeriod period, CancellationToken token);
+    Task<IReadOnlyList<DashboardActivityItem>> AdminActivityAsync(DashboardPeriod period, CancellationToken token);
 }

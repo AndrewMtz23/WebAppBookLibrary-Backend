@@ -49,8 +49,11 @@ public sealed class MongoBookStore : IBookStore
     {
         var builder = Builders<Book>.Filter;
         var filters = new List<FilterDefinition<Book>>();
+        if (query.BookId is not null) filters.Add(builder.Eq(book => book.Id, query.BookId));
         if (!includeInactive) filters.Add(builder.Or(builder.Eq(book => book.IsActive, true), builder.Exists(book => book.IsActive, false)));
-        else if (query.IsActive is not null) filters.Add(builder.Eq(book => book.IsActive, query.IsActive.Value));
+        else if (query.IsActive is not null) filters.Add(query.IsActive.Value
+            ? builder.Or(builder.Eq(book => book.IsActive, true), builder.Exists(book => book.IsActive, false))
+            : builder.Eq(book => book.IsActive, false));
         if (query.Query is not null)
         {
             if (query.Sort == "relevance") filters.Add(builder.Text(query.Query));
@@ -60,8 +63,10 @@ public sealed class MongoBookStore : IBookStore
                 filters.Add(builder.Or(builder.Regex(book => book.Title, regex), builder.Regex(book => book.Subtitle, regex), builder.Regex(book => book.Isbn, regex), builder.AnyStringIn(book => book.Authors, regex)));
             }
         }
-        if (query.Genre is not null) filters.Add(builder.AnyEq(book => book.Genres, query.Genre));
-        if (query.MediaType is not null) filters.Add(query.MediaType == MediaTypes.Physical ? builder.Or(builder.Eq(book => book.MediaType, query.MediaType), builder.Exists(book => book.MediaType, false)) : builder.Eq(book => book.MediaType, query.MediaType));
+        if (query.Genre is not null) filters.Add(builder.Or(builder.AnyEq(book => book.Genres, query.Genre), builder.Eq(book => book.Genre, query.Genre)));
+        if (query.MediaType is not null) filters.Add(query.MediaType == MediaTypes.Physical
+            ? builder.Or(builder.Eq(book => book.MediaType, query.MediaType), builder.Regex(book => book.MediaType, new BsonRegularExpression("^\\s*$")), builder.Exists(book => book.MediaType, false))
+            : builder.Eq(book => book.MediaType, query.MediaType));
         if (query.Language is not null) filters.Add(builder.Eq(book => book.Language, query.Language));
         if (query.Available is not null)
         {
@@ -70,7 +75,10 @@ public sealed class MongoBookStore : IBookStore
         }
         if (includeInactive && query.LowStock is not null)
         {
-            var low = builder.And(builder.Eq(book => book.IsActive, true), builder.Eq(book => book.MediaType, MediaTypes.Physical), builder.Eq(book => book.AvailableCopies, 1));
+            var active = builder.Or(builder.Eq(book => book.IsActive, true), builder.Exists(book => book.IsActive, false));
+            var physical = builder.Or(builder.Eq(book => book.MediaType, MediaTypes.Physical), builder.Regex(book => book.MediaType, new BsonRegularExpression("^\\s*$")), builder.Exists(book => book.MediaType, false));
+            var oneAvailable = builder.Or(builder.Eq(book => book.AvailableCopies, 1), builder.And(builder.Exists(book => book.AvailableCopies, false), builder.Eq(book => book.IsAvailable, true)));
+            var low = builder.And(active, physical, oneAvailable);
             filters.Add(query.LowStock.Value ? low : builder.Not(low));
         }
         if (includeInactive && query.MissingResource is not null)
