@@ -66,8 +66,11 @@ public class BooksController : ControllerBase
         if (!ObjectId.TryParse(id, out _)) return ApiProblemFactory.Result(400, "Invalid book identifier");
         var result = await _bookService.DeletePermanentlyAsync(id, cancellationToken);
         if (!result.Success)
+        {
+            if (_logService is not null) await _logService.BookChangedAsync("permanent_delete_attempt", User.Identity?.Name ?? string.Empty, id, new Dictionary<string, string> { ["result"] = "failed", ["reasonCode"] = result.ErrorCode });
             return result.ErrorCode == "book_not_found" ? ApiProblemFactory.Result(404, "Book not found") : BookProblem(409, "Book cannot be permanently deleted", result.ErrorCode);
-        if (_logService is not null) await _logService.BookChangedAsync("permanently_deleted", User.Identity?.Name ?? string.Empty, id);
+        }
+        if (_logService is not null) await _logService.BookChangedAsync("permanently_deleted", User.Identity?.Name ?? string.Empty, id, new Dictionary<string, string> { ["result"] = "success" });
         return NoContent();
     }
 
@@ -116,8 +119,11 @@ public class BooksController : ControllerBase
 
         var result = await _bookService.DeleteAsync(id);
         if (!result.Success)
+        {
+            if (_logService is not null) await _logService.BookChangedAsync("deactivation_attempt", User.Identity?.Name ?? string.Empty, id, new Dictionary<string, string> { ["result"] = "failed", ["reasonCode"] = "book_not_found" });
             return ApiProblemFactory.Result(404, "Book not found");
-        if (_logService is not null) await _logService.BookChangedAsync("deactivated", User.Identity?.Name ?? string.Empty, id);
+        }
+        if (_logService is not null) await _logService.BookChangedAsync("deactivated", User.Identity?.Name ?? string.Empty, id, new Dictionary<string, string> { ["result"] = "success" });
         return NoContent();
     }
 
@@ -129,8 +135,12 @@ public class BooksController : ControllerBase
             return ApiProblemFactory.Result(400, "Invalid book identifier");
 
         var result = await _bookService.SetActiveAsync(id, request.IsActive, DateTime.UtcNow, cancellationToken);
-        if (!result.Success) return ApiProblemFactory.Result(404, "Book not found");
-        if (_logService is not null) await _logService.BookChangedAsync(request.IsActive ? "activated" : "deactivated", User.Identity?.Name ?? string.Empty, id);
+        if (!result.Success)
+        {
+            if (_logService is not null) await _logService.BookChangedAsync("status_change_attempt", User.Identity?.Name ?? string.Empty, id, new Dictionary<string, string> { ["result"] = "failed", ["reasonCode"] = "book_not_found", ["status"] = request.IsActive ? "active" : "inactive" });
+            return ApiProblemFactory.Result(404, "Book not found");
+        }
+        if (_logService is not null) await _logService.BookChangedAsync(request.IsActive ? "activated" : "deactivated", User.Identity?.Name ?? string.Empty, id, new Dictionary<string, string> { ["result"] = "success", ["status"] = request.IsActive ? "active" : "inactive" });
         return Ok(new { message = request.IsActive ? "Book activated" : "Book deactivated" });
     }
 

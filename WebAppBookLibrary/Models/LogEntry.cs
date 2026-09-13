@@ -18,6 +18,7 @@ namespace WebAppBookLibrary.Models
         public string? Controller { get; set; }
         public string? IP { get; set; }
         public string? Method { get; set; }
+        public int? StatusCode { get; set; }
         public string? EventType { get; set; }
         public string? ActorId { get; set; }
         public string? ActorUsername { get; set; }

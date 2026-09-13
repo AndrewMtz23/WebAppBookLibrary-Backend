@@ -7,7 +7,7 @@ public static class AuditLogEntryFactory
     private static readonly HashSet<string> AllowedMetadata = new(StringComparer.OrdinalIgnoreCase)
     {
         "field", "operation", "status", "mediaType", "role", "reasonCode", "count",
-        "result", "previousRole", "newRole", "previousStatus", "newStatus"
+        "result", "previousRole", "newRole", "previousStatus", "newStatus", "statusCode"
     };
     public static LogEntry Create(
         string level,
@@ -39,8 +39,16 @@ public static class AuditLogEntryFactory
     public static LogEntry UserChanged(string action, string actorId, string targetId, IReadOnlyDictionary<string, string>? metadata, HttpContext? context) =>
         DomainChanged("user", action, actorId, targetId, metadata, context);
 
-    public static LogEntry AuthenticationObserved(string action, string actorId, IReadOnlyDictionary<string, string>? metadata, HttpContext? context) =>
-        DomainChanged("authentication", action, actorId, actorId, metadata, context);
+    public static LogEntry AuthenticationObserved(string action, string actorId, IReadOnlyDictionary<string, string>? metadata, HttpContext? context)
+    {
+        var entry = DomainChanged("authentication", action, actorId, actorId, metadata, context);
+        if (action == "failed")
+        {
+            entry.StatusCode = StatusCodes.Status401Unauthorized;
+            entry.Metadata["statusCode"] = StatusCodes.Status401Unauthorized.ToString();
+        }
+        return entry;
+    }
 
     private static LogEntry DomainChanged(string aggregate, string action, string actorId, string targetId, IReadOnlyDictionary<string, string>? metadata, HttpContext? context)
     {
@@ -50,21 +58,33 @@ public static class AuditLogEntryFactory
         entry.ActorUsername = context?.User.Identity?.Name;
         entry.TargetType = aggregate;
         entry.TargetId = targetId;
-        entry.Metadata = metadata?
+        entry.Metadata = SafeMetadata(metadata);
+        return entry;
+    }
+
+    public static Dictionary<string, string> SafeMetadata(IReadOnlyDictionary<string, string>? metadata)
+    {
+        return metadata?
             .Where(item => AllowedMetadata.Contains(item.Key) && IsSafeMetadataValue(item.Key, item.Value))
             .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase) ?? [];
-        return entry;
     }
 
     private static bool IsSafeMetadataValue(string key, string value)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > 100 || value.Any(char.IsControl)) return false;
+        if (value.Contains("http://", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("https://", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("password", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("authorization", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("bearer ", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("token", StringComparison.OrdinalIgnoreCase)) return false;
         return key.ToLowerInvariant() switch
         {
             "result" => value is "success" or "failed",
             "previousrole" or "newrole" or "role" => value is "user" or "librarian" or "admin",
             "previousstatus" or "newstatus" or "status" => value is "active" or "inactive" or "returned" or "cancelled" or "overdue",
             "reasoncode" => value.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-'),
+            "statuscode" => int.TryParse(value, out var status) && status is >= 100 and <= 599,
             _ => true
         };
     }
