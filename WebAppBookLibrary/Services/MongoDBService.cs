@@ -105,7 +105,8 @@ namespace WebAppBookLibrary.Services
             {
                 new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.Timestamp), new CreateIndexOptions { Name = "Timestamp_1" }),
                 new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.Level).Descending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_level_timestamp" }),
-                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.EventType).Descending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_event_timestamp" })
+                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.EventType).Descending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_event_timestamp" }),
+                new CreateIndexModel<LogEntry>(logBuilder.Ascending(l => l.EventType).Ascending(l => l.IP).Descending(l => l.Timestamp), new CreateIndexOptions { Name = "ix_logs_auth_origin_timestamp" })
             };
             await LogEntries.Indexes.CreateManyAsync(logIndexes);
 

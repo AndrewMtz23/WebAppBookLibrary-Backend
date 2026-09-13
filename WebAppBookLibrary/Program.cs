@@ -63,6 +63,9 @@ public static class Program
                 PolicyNames.ViewAudit,
                 policy => policy.RequireRole(RoleNames.Admin));
             options.AddPolicy(
+                PolicyNames.ViewSecurity,
+                policy => policy.RequireRole(RoleNames.Admin));
+            options.AddPolicy(
                 PolicyNames.ManageUsers,
                 policy => policy.RequireRole(RoleNames.Admin));
         });
@@ -70,6 +73,7 @@ public static class Program
 
     private static void ConfigurePipeline(WebApplication app)
     {
+        app.UseMiddleware<RequestObservationMiddleware>();
         app.UseExceptionHandler(exceptionApp =>
             exceptionApp.Run(context =>
                 ApiProblemFactory.WriteAsync(

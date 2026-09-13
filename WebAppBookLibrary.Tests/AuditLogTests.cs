@@ -99,6 +99,23 @@ public class AuditLogTests
     }
 
     [Fact]
+    public void DomainEvent_DropsSensitiveValuesEvenWhenTheMetadataKeyIsAllowed()
+    {
+        var entry = AuditLogEntryFactory.BookChanged(
+            "updated",
+            "actor-1",
+            "book-1",
+            new Dictionary<string, string>
+            {
+                ["field"] = "https://private.example/book.pdf",
+                ["operation"] = "Authorization: Bearer private-token"
+            },
+            new DefaultHttpContext());
+
+        Assert.Empty(entry.Metadata);
+    }
+
+    [Fact]
     public void User_mutation_attempt_keeps_only_canonical_outcome_metadata()
     {
         var context = new DefaultHttpContext { TraceIdentifier = "users-corr-7" };
@@ -131,6 +148,21 @@ public class AuditLogTests
     }
 
     [Fact]
+    public void Failed_authentication_records_safe_numeric_status_without_credentials()
+    {
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.44");
+        var entry = AuditLogEntryFactory.AuthenticationObserved("failed", "anonymous", new Dictionary<string, string>
+        {
+            ["reasonCode"] = "invalid_credentials", ["password"] = "never"
+        }, context);
+
+        Assert.Equal(401, entry.StatusCode);
+        Assert.Equal("401", entry.Metadata["statusCode"]);
+        Assert.DoesNotContain("password", entry.Metadata.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void PublicAuditResponse_MasksIpAddress()
     {
         var entry = new LogEntry { Id = ObjectId.GenerateNewId().ToString(), IP = "192.0.2.123" };
@@ -138,6 +170,37 @@ public class AuditLogTests
         var response = AuditLogResponse.From(entry);
 
         Assert.Equal("192.0.2.0", response.IP);
+    }
+
+    [Fact]
+    public void PublicAuditResponse_DropsUnsafeLegacyMetadataAndExceptionText()
+    {
+        var entry = new LogEntry
+        {
+            Id = ObjectId.GenerateNewId().ToString(), Message = "Failure: password=secret-value",
+            Exception = "System.Exception: another-secret\n at Private.Code()",
+            Metadata = new Dictionary<string, string> { ["password"] = "secret-value", ["statusCode"] = "500", ["result"] = "success" }
+        };
+
+        var detail = AuditLogResponse.Detail(entry);
+
+        Assert.Equal("Failure: [redacted]", detail.Log.Message);
+        Assert.DoesNotContain("password", detail.Log.Metadata.Keys, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal("500", detail.Log.Metadata["statusCode"]);
+        Assert.DoesNotContain("secret", System.Text.Json.JsonSerializer.Serialize(detail), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PublicAuditResponse_RedactsLegacyCredentialsAndPrivateUrlsWithoutException()
+    {
+        var response = AuditLogResponse.From(new LogEntry
+        {
+            Id = ObjectId.GenerateNewId().ToString(), Message = "Authorization: Bearer-secret password=hunter2 url=https://private.example/file"
+        });
+
+        Assert.DoesNotContain("Bearer-secret", response.Message);
+        Assert.DoesNotContain("hunter2", response.Message);
+        Assert.DoesNotContain("private.example", response.Message);
     }
 
     private static InvalidOperationException CreateSensitiveException()

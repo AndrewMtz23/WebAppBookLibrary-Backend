@@ -32,6 +32,14 @@ public class AuthorizationPolicyTests
     }
 
     [Fact]
+    public async Task ViewSecurity_accepts_admin_only()
+    {
+        Assert.False(await IsAuthorizedAsync(PolicyNames.ViewSecurity, RoleNames.User));
+        Assert.False(await IsAuthorizedAsync(PolicyNames.ViewSecurity, RoleNames.Librarian));
+        Assert.True(await IsAuthorizedAsync(PolicyNames.ViewSecurity, RoleNames.Admin));
+    }
+
+    [Fact]
     public async Task Default_policy_accepts_only_canonical_roles()
     {
         Assert.True(await IsAuthorizedAsync(policyName: null, RoleNames.User));
