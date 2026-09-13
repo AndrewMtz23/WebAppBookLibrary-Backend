@@ -6,7 +6,8 @@ public static class AuditLogEntryFactory
 {
     private static readonly HashSet<string> AllowedMetadata = new(StringComparer.OrdinalIgnoreCase)
     {
-        "field", "operation", "status", "mediaType", "role", "reasonCode", "count"
+        "field", "operation", "status", "mediaType", "role", "reasonCode", "count",
+        "result", "previousRole", "newRole", "previousStatus", "newStatus"
     };
     public static LogEntry Create(
         string level,
@@ -49,8 +50,23 @@ public static class AuditLogEntryFactory
         entry.ActorUsername = context?.User.Identity?.Name;
         entry.TargetType = aggregate;
         entry.TargetId = targetId;
-        entry.Metadata = metadata?.Where(item => AllowedMetadata.Contains(item.Key)).ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase) ?? [];
+        entry.Metadata = metadata?
+            .Where(item => AllowedMetadata.Contains(item.Key) && IsSafeMetadataValue(item.Key, item.Value))
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase) ?? [];
         return entry;
+    }
+
+    private static bool IsSafeMetadataValue(string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 100 || value.Any(char.IsControl)) return false;
+        return key.ToLowerInvariant() switch
+        {
+            "result" => value is "success" or "failed",
+            "previousrole" or "newrole" or "role" => value is "user" or "librarian" or "admin",
+            "previousstatus" or "newstatus" or "status" => value is "active" or "inactive" or "returned" or "cancelled" or "overdue",
+            "reasoncode" => value.All(character => char.IsAsciiLetterOrDigit(character) || character is '_' or '-'),
+            _ => true
+        };
     }
 
     private static string SanitizeMessage(string message, Exception? exception)

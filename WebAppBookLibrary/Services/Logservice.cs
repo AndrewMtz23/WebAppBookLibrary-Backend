@@ -3,7 +3,12 @@ using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Services
 {
-    public class Logservice
+    public interface IAdminUserAudit
+    {
+        Task UserChangedAsync(string action, string actorId, string targetId, IReadOnlyDictionary<string, string>? metadata = null);
+    }
+
+    public class Logservice : IAdminUserAudit
     {
         private readonly IMongoCollection<LogEntry> _logs;
         private readonly ILogger<Logservice> _logger;
