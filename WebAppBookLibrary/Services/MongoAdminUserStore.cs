@@ -10,8 +10,13 @@ namespace WebAppBookLibrary.Services;
 public sealed class MongoAdminUserStore : IAdminUserStore
 {
     private readonly IMongoCollection<User> _users;
+    private readonly IMongoCollection<BsonDocument> _mutationGuards;
     public MongoAdminUserStore(MongoDBService database) : this(database.Users) { }
-    public MongoAdminUserStore(IMongoCollection<User> users) => _users = users;
+    public MongoAdminUserStore(IMongoCollection<User> users)
+    {
+        _users = users;
+        _mutationGuards = users.Database.GetCollection<BsonDocument>("AdminMutationGuards");
+    }
 
     public async Task<PagedResult<User>> SearchAsync(AdminUserQuery raw, CancellationToken token)
     {
@@ -41,7 +46,8 @@ public sealed class MongoAdminUserStore : IAdminUserStore
         return new(users, query.Page, query.PageSize, total);
     }
 
-    public async Task<User?> FindByIdAsync(string id, CancellationToken token) => await _users.Find(user => user.Id == id).FirstOrDefaultAsync(token);
+    public async Task<User?> FindByIdAsync(string id, CancellationToken token) =>
+        ObjectId.TryParse(id, out var parsed) ? await _users.Find(user => user.Id == parsed.ToString()).FirstOrDefaultAsync(token) : null;
     public Task<long> CountActiveAdminsAsync(CancellationToken token) => _users.CountDocumentsAsync(user => user.Role == RoleNames.Admin && user.IsActive, cancellationToken: token);
     public async Task<bool> TrySetRoleAsync(string id, string role, DateTime at, CancellationToken token) => (await _users.UpdateOneAsync(user => user.Id == id, Builders<User>.Update.Set(user => user.Role, role).Set(user => user.UpdatedAt, at), cancellationToken: token)).ModifiedCount == 1;
     public async Task<bool> TrySetStatusAsync(string id, bool active, DateTime at, CancellationToken token) => (await _users.UpdateOneAsync(user => user.Id == id, Builders<User>.Update.Set(user => user.IsActive, active).Set(user => user.UpdatedAt, at), cancellationToken: token)).ModifiedCount == 1;
@@ -54,29 +60,64 @@ public sealed class MongoAdminUserStore : IAdminUserStore
 
     private async Task<AdminStoreMutationResult> MutateSafelyAsync(string actorId, string targetId, string? role, bool? active, DateTime at, CancellationToken token)
     {
-        using var session = await _users.Database.Client.StartSessionAsync(cancellationToken: token);
-        session.StartTransaction();
+        if (!ObjectId.TryParse(actorId, out var actorObjectId)) return AdminStoreMutationResult.ActorInvalid;
+        if (!ObjectId.TryParse(targetId, out var targetObjectId)) return AdminStoreMutationResult.NotFound;
+        var canonicalActorId = actorObjectId.ToString();
+        var canonicalTargetId = targetObjectId.ToString();
+        const string guardId = "active-admin-invariant";
         try
         {
-            var target = await _users.Find(session, user => user.Id == targetId).FirstOrDefaultAsync(token);
-            if (target is null) { await session.AbortTransactionAsync(token); return AdminStoreMutationResult.NotFound; }
-            if (actorId == targetId && ((role is not null && role != RoleNames.Admin) || active == false))
-            { await session.AbortTransactionAsync(token); return AdminStoreMutationResult.SelfMutation; }
-            var removesAdmin = target.Role == RoleNames.Admin && target.IsActive && ((role is not null && role != RoleNames.Admin) || active == false);
-            if (removesAdmin && await _users.CountDocumentsAsync(session, user => user.Role == RoleNames.Admin && user.IsActive, cancellationToken: token) <= 1)
-            { await session.AbortTransactionAsync(token); return AdminStoreMutationResult.LastAdmin; }
-            var update = Builders<User>.Update.Set(user => user.UpdatedAt, at);
-            if (role is not null) update = update.Set(user => user.Role, role);
-            if (active is not null) update = update.Set(user => user.IsActive, active.Value);
-            var result = await _users.UpdateOneAsync(session, user => user.Id == targetId, update, cancellationToken: token);
-            if (result.MatchedCount != 1) { await session.AbortTransactionAsync(token); return AdminStoreMutationResult.Conflict; }
-            await session.CommitTransactionAsync(token);
-            return AdminStoreMutationResult.Success;
+            await _mutationGuards.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", guardId),
+                Builders<BsonDocument>.Update.SetOnInsert("createdAt", DateTime.UtcNow).SetOnInsert("version", 0L),
+                new UpdateOptions { IsUpsert = true },
+                token);
+            using var session = await _users.Database.Client.StartSessionAsync(cancellationToken: token);
+            return await session.WithTransactionAsync(async (transaction, transactionToken) =>
+            {
+                await _mutationGuards.UpdateOneAsync(
+                    transaction,
+                    Builders<BsonDocument>.Filter.Eq("_id", guardId),
+                    Builders<BsonDocument>.Update.Inc("version", 1L),
+                    cancellationToken: transactionToken);
+
+                var actor = await _users.Find(transaction, user => user.Id == canonicalActorId).FirstOrDefaultAsync(transactionToken);
+                if (actor is null || !actor.IsActive || !string.Equals(actor.Role, RoleNames.Admin, StringComparison.Ordinal))
+                    return new(AdminStoreMutationOutcome.ActorInvalid, actor?.Username);
+
+                var target = await _users.Find(transaction, user => user.Id == canonicalTargetId).FirstOrDefaultAsync(transactionToken);
+                if (target is null) return new(AdminStoreMutationOutcome.NotFound, actor.Username);
+
+                var nextRole = role ?? target.Role;
+                var nextActive = active ?? target.IsActive;
+                var snapshot = new AdminStoreMutationResult(
+                    AdminStoreMutationOutcome.Success,
+                    actor.Username,
+                    target.Username,
+                    target.Role,
+                    target.IsActive,
+                    nextRole,
+                    nextActive);
+                if (canonicalActorId == canonicalTargetId && (nextRole != RoleNames.Admin || !nextActive))
+                    return snapshot with { Outcome = AdminStoreMutationOutcome.SelfMutation };
+
+                var removesAdmin = target.Role == RoleNames.Admin && target.IsActive && (nextRole != RoleNames.Admin || !nextActive);
+                if (removesAdmin && await _users.CountDocumentsAsync(transaction, user => user.Role == RoleNames.Admin && user.IsActive, cancellationToken: transactionToken) <= 1)
+                    return snapshot with { Outcome = AdminStoreMutationOutcome.LastAdmin };
+
+                var update = Builders<User>.Update.Set(user => user.UpdatedAt, at);
+                if (role is not null) update = update.Set(user => user.Role, role);
+                if (active is not null) update = update.Set(user => user.IsActive, active.Value);
+                var result = await _users.UpdateOneAsync(transaction, user => user.Id == canonicalTargetId, update, cancellationToken: transactionToken);
+                return result.MatchedCount == 1 ? snapshot : snapshot with { Outcome = AdminStoreMutationOutcome.Conflict };
+            }, new TransactionOptions(readConcern: ReadConcern.Snapshot, writeConcern: WriteConcern.WMajority), token);
         }
-        catch
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            if (session.IsInTransaction) await session.AbortTransactionAsync(CancellationToken.None);
-            return AdminStoreMutationResult.Conflict;
+            throw;
         }
+        catch (MongoConnectionException) { return AdminStoreMutationResult.Unavailable; }
+        catch (TimeoutException) { return AdminStoreMutationResult.Unavailable; }
+        catch (MongoException) { return AdminStoreMutationResult.Conflict; }
     }
 }

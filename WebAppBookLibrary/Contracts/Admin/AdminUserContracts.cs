@@ -29,5 +29,5 @@ public sealed class AdminUserQuery : IValidatableObject
     private static DateTime? Utc(DateTime? value) => value?.ToUniversalTime();
 }
 
-public sealed record SetUserRoleRequest([property: Required] string Role);
+public sealed record SetUserRoleRequest([Required] string Role);
 public sealed record SetUserStatusRequest(bool IsActive);

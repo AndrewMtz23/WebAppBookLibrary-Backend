@@ -99,6 +99,38 @@ public class AuditLogTests
     }
 
     [Fact]
+    public void User_mutation_attempt_keeps_only_canonical_outcome_metadata()
+    {
+        var context = new DefaultHttpContext { TraceIdentifier = "users-corr-7" };
+        context.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity([
+            new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "root-admin")
+        ], "test"));
+
+        var entry = AuditLogEntryFactory.UserChanged(
+            "role_change_attempt",
+            "507f1f77bcf86cd799439011",
+            "507f1f77bcf86cd799439012",
+            new Dictionary<string, string>
+            {
+                ["result"] = "failed",
+                ["reasonCode"] = "last_active_admin",
+                ["previousRole"] = "admin",
+                ["newRole"] = "user",
+                ["password"] = "never-log-this"
+            },
+            context);
+
+        Assert.Equal("user.role_change_attempt", entry.EventType);
+        Assert.Equal("root-admin", entry.ActorUsername);
+        Assert.Equal("users-corr-7", entry.CorrelationId);
+        Assert.Equal("failed", entry.Metadata["result"]);
+        Assert.Equal("last_active_admin", entry.Metadata["reasonCode"]);
+        Assert.Equal("admin", entry.Metadata["previousRole"]);
+        Assert.Equal("user", entry.Metadata["newRole"]);
+        Assert.DoesNotContain("password", entry.Metadata.Keys, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void PublicAuditResponse_MasksIpAddress()
     {
         var entry = new LogEntry { Id = ObjectId.GenerateNewId().ToString(), IP = "192.0.2.123" };

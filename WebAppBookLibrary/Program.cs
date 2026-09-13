@@ -220,6 +220,8 @@ public static class Program
         services.AddScoped<ProfileService>();
         services.AddScoped<LoanService>();
         services.AddScoped<Logservice>();
+        services.AddScoped<IAdminUserAudit>(provider => provider.GetRequiredService<Logservice>());
+        services.AddScoped<AdminMutationValidationAuditFilter>();
 
         services.AddHttpContextAccessor();
         ConfigureAuthorizationPolicies(services);

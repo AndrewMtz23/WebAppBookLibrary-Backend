@@ -15,4 +15,22 @@ public interface IAdminUserStore
     Task<AdminStoreMutationResult> SetStatusSafelyAsync(string actorId, string targetId, bool active, DateTime updatedAtUtc, CancellationToken token);
 }
 
-public enum AdminStoreMutationResult { Success, NotFound, SelfMutation, LastAdmin, Conflict }
+public enum AdminStoreMutationOutcome { Success, NotFound, SelfMutation, LastAdmin, ActorInvalid, Conflict, Unavailable }
+
+public sealed record AdminStoreMutationResult(
+    AdminStoreMutationOutcome Outcome,
+    string? ActorUsername = null,
+    string? TargetUsername = null,
+    string? PreviousRole = null,
+    bool? PreviousIsActive = null,
+    string? NewRole = null,
+    bool? NewIsActive = null)
+{
+    public static readonly AdminStoreMutationResult Success = new(AdminStoreMutationOutcome.Success);
+    public static readonly AdminStoreMutationResult NotFound = new(AdminStoreMutationOutcome.NotFound);
+    public static readonly AdminStoreMutationResult SelfMutation = new(AdminStoreMutationOutcome.SelfMutation);
+    public static readonly AdminStoreMutationResult LastAdmin = new(AdminStoreMutationOutcome.LastAdmin);
+    public static readonly AdminStoreMutationResult ActorInvalid = new(AdminStoreMutationOutcome.ActorInvalid);
+    public static readonly AdminStoreMutationResult Conflict = new(AdminStoreMutationOutcome.Conflict);
+    public static readonly AdminStoreMutationResult Unavailable = new(AdminStoreMutationOutcome.Unavailable);
+}
