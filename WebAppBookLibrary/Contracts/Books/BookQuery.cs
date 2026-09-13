@@ -7,6 +7,7 @@ public sealed class BookQuery
     public const int MaxQueryLength = 200;
     private static readonly HashSet<string> AllowedSorts = new(StringComparer.OrdinalIgnoreCase) { "createdAt", "title", "publishedDate", "reservationCount", "relevance" };
     public string? Query { get; init; }
+    public string? BookId { get; init; }
     public string? Genre { get; init; }
     public string? MediaType { get; init; }
     public string? Language { get; init; }
@@ -34,8 +35,9 @@ public sealed class BookQuery
         Math.Clamp(PageSize, 1, 100),
         normalizedSort,
         string.Equals(Direction, "asc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc",
-        IncludeIdTieBreaker: true);
+        IncludeIdTieBreaker: true,
+        BookId: string.IsNullOrWhiteSpace(BookId) ? null : BookId.Trim());
     }
 }
 
-public sealed record NormalizedBookQuery(string? Query, string? Genre, string? MediaType, string? Language, bool? Available, bool? IsActive, bool? LowStock, bool? MissingResource, int Page, int PageSize, string Sort, string Direction, bool IncludeIdTieBreaker);
+public sealed record NormalizedBookQuery(string? Query, string? Genre, string? MediaType, string? Language, bool? Available, bool? IsActive, bool? LowStock, bool? MissingResource, int Page, int PageSize, string Sort, string Direction, bool IncludeIdTieBreaker, string? BookId);

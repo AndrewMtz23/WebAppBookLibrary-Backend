@@ -37,6 +37,14 @@ public sealed class DashboardController(DashboardService service) : ControllerBa
         return Ok(await service.AdminAsync(period!, token));
     }
 
+    [HttpGet("admin/activity")]
+    [Authorize(Policy = PolicyNames.ManageUsers)]
+    public async Task<IActionResult> AdminActivity([FromQuery] DashboardQuery query, CancellationToken token)
+    {
+        if (!TryPeriod(query, out var period, out var error)) return DashboardProblem(error);
+        return Ok(await service.AdminActivityAsync(period!, token));
+    }
+
     private static bool TryPeriod(DashboardQuery query, out DashboardPeriod? period, out string error) => DashboardPeriod.TryCreate(query.From, query.To, query.Timezone, out period, out error);
     private static ObjectResult DashboardProblem(string code)
     {

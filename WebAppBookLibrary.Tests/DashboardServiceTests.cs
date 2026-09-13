@@ -43,5 +43,6 @@ public sealed class DashboardServiceTests
         public Task<ReaderDashboardResponse> ReaderAsync(string userId, DashboardPeriod period, CancellationToken token) { ReaderUserId = userId; return Task.FromResult(new ReaderDashboardResponse(period.GeneratedAt, period.FromUtc, period.ToUtc, 3, 1, [new("physical", 2), new("digital", 1)])); }
         public Task<LibrarianDashboardResponse> LibrarianAsync(DashboardPeriod period, CancellationToken token) => throw new NotImplementedException();
         public Task<AdminDashboardResponse> AdminAsync(DashboardPeriod period, CancellationToken token) => throw new NotImplementedException();
+        public Task<IReadOnlyList<DashboardActivityItem>> AdminActivityAsync(DashboardPeriod period, CancellationToken token) => throw new NotImplementedException();
     }
 }

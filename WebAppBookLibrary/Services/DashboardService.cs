@@ -11,4 +11,5 @@ public sealed class DashboardService(IDashboardStore store)
     }
     public Task<LibrarianDashboardResponse> LibrarianAsync(DashboardPeriod period, CancellationToken token) => store.LibrarianAsync(period, token);
     public Task<AdminDashboardResponse> AdminAsync(DashboardPeriod period, CancellationToken token) => store.AdminAsync(period, token);
+    public Task<IReadOnlyList<DashboardActivityItem>> AdminActivityAsync(DashboardPeriod period, CancellationToken token) => store.AdminActivityAsync(period, token);
 }
