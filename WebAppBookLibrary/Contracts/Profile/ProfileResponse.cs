@@ -5,6 +5,7 @@ public sealed record ProfileResponse(
     string DisplayName,
     string Username,
     string Email,
+    string? AvatarUrl,
     string Role,
     DateTime CreatedAt,
     DateTime? LastLoginAt);

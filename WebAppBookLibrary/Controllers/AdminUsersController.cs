@@ -40,6 +40,27 @@ public sealed class AdminUsersController : ControllerBase
         return MutationResult(result);
     }
 
+    [HttpPut("{id}")]
+    public async Task<IActionResult> Update(string id, UpdateAdminUserRequest request, CancellationToken token)
+    {
+        if (!ObjectId.TryParse(id, out _)) return await InvalidIdentifierAsync("user_update_attempt");
+        var actorId = CanonicalId(ActorId());
+        var targetId = CanonicalId(id);
+        var result = await service.UpdateAsync(actorId, targetId, request, DateTime.UtcNow, token);
+        await audit.UserChangedAsync("user_update_attempt", actorId, targetId, UpdateAuditMetadata(result));
+        if (result.Success) return Ok(result.User);
+        return result.ErrorCode switch
+        {
+            AdminUserErrorCodes.NotFound => ApiProblemFactory.Result(404, "User not found"),
+            AdminUserErrorCodes.InvalidRequest => ApiProblemFactory.Result(400, "Invalid user details"),
+            AdminUserErrorCodes.InvalidRole => ApiProblemFactory.Result(400, "Invalid role"),
+            AdminUserErrorCodes.IdentityConflict => ApiProblemFactory.Result(409, "Username or email already exists"),
+            AdminUserErrorCodes.ActorInvalid => ApiProblemFactory.Result(401, "Session is no longer valid"),
+            AdminUserErrorCodes.Unavailable => ApiProblemFactory.Result(503, "User service is unavailable"),
+            _ => ApiProblemFactory.Result(409, "User cannot be updated")
+        };
+    }
+
     [HttpPut("{id}/status")]
     public async Task<IActionResult> SetStatus(string id, SetUserStatusRequest request, CancellationToken token)
     {
@@ -76,6 +97,20 @@ public sealed class AdminUsersController : ControllerBase
         {
             if (result.PreviousIsActive is not null) metadata["previousStatus"] = result.PreviousIsActive.Value ? "active" : "inactive";
             if (result.NewIsActive is not null) metadata["newStatus"] = result.NewIsActive.Value ? "active" : "inactive";
+        }
+        return metadata;
+    }
+
+    private static IReadOnlyDictionary<string, string> UpdateAuditMetadata(AdminUserUpdateResult result)
+    {
+        var metadata = new Dictionary<string, string> { ["result"] = result.Success ? "success" : "failed" };
+        if (!result.Success && !string.IsNullOrWhiteSpace(result.ErrorCode)) metadata["reasonCode"] = result.ErrorCode;
+        if (result.Mutation is { } mutation)
+        {
+            if (mutation.PreviousRole is not null) metadata["previousRole"] = mutation.PreviousRole;
+            if (mutation.NewRole is not null) metadata["newRole"] = mutation.NewRole;
+            if (mutation.PreviousIsActive is not null) metadata["previousStatus"] = mutation.PreviousIsActive.Value ? "active" : "inactive";
+            if (mutation.NewIsActive is not null) metadata["newStatus"] = mutation.NewIsActive.Value ? "active" : "inactive";
         }
         return metadata;
     }
