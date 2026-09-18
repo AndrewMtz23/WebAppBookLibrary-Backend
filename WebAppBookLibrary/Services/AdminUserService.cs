@@ -30,7 +30,31 @@ public sealed class AdminUserService(IAdminUserStore store)
         return Map(await store.SetStatusSafelyAsync(actorId, targetId, active, at, token));
     }
 
-    private static AdminUserResponse Map(User user) => new(user.Id, user.Username, user.DisplayName, user.Email, user.Role, user.IsActive, user.CreatedAt, user.UpdatedAt, user.LastLoginAt);
+    public async Task<AdminUserMutationResult> DeletePermanentlyAsync(string actorId, string targetId, CancellationToken token) =>
+        Map(await store.DeletePermanentlyAsync(actorId, targetId, token));
+
+    public async Task<AdminUserUpdateResult> UpdateAsync(string actorId, string targetId, UpdateAdminUserRequest request, DateTime at, CancellationToken token)
+    {
+        if (!RoleNames.TryNormalize(request.Role, out var role))
+            return new(false, AdminUserErrorCodes.InvalidRole);
+        var username = request.Username.Trim();
+        var displayName = request.DisplayName.Trim();
+        var email = request.Email.Trim();
+        var avatarUrl = string.IsNullOrWhiteSpace(request.AvatarUrl) ? null : request.AvatarUrl.Trim();
+        if (username.Length is < 3 or > 100 || displayName.Length is < 1 or > 120 || email.Length > 254 || !EmailValidator.IsValid(email) ||
+            request.ExpectedUpdatedAt == default || !ValidAvatarUrl(avatarUrl))
+            return new(false, AdminUserErrorCodes.InvalidRequest);
+
+        var command = new AdminUserUpdateCommand(username, displayName, email, avatarUrl, role, request.IsActive, request.ExpectedUpdatedAt.ToUniversalTime());
+        var result = await store.UpdateSafelyAsync(actorId, targetId, command, at, token);
+        var mutation = Map(result);
+        return new(mutation.Success, mutation.ErrorCode, result.UpdatedUser is null ? null : Map(result.UpdatedUser), mutation);
+    }
+
+    private static bool ValidAvatarUrl(string? value) =>
+        value is null || Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static AdminUserResponse Map(User user) => new(user.Id, user.Username, user.DisplayName, user.Email, user.AvatarUrl, user.Role, user.IsActive, user.CreatedAt, user.UpdatedAt, user.LastLoginAt);
     private static AdminUserMutationResult Map(AdminStoreMutationResult result) => new(
         result.Outcome == AdminStoreMutationOutcome.Success,
         result.Outcome switch
@@ -40,6 +64,9 @@ public sealed class AdminUserService(IAdminUserStore store)
         AdminStoreMutationOutcome.SelfMutation => AdminUserErrorCodes.SelfMutation,
         AdminStoreMutationOutcome.LastAdmin => AdminUserErrorCodes.LastAdmin,
         AdminStoreMutationOutcome.ActorInvalid => AdminUserErrorCodes.ActorInvalid,
+        AdminStoreMutationOutcome.IdentityConflict => AdminUserErrorCodes.IdentityConflict,
+        AdminStoreMutationOutcome.MustBeInactive => AdminUserErrorCodes.MustBeInactive,
+        AdminStoreMutationOutcome.HasLoans => AdminUserErrorCodes.HasLoans,
         AdminStoreMutationOutcome.Unavailable => AdminUserErrorCodes.Unavailable,
         _ => AdminUserErrorCodes.Conflict
     }, result.ActorUsername, result.TargetUsername, result.PreviousRole, result.PreviousIsActive, result.NewRole, result.NewIsActive);
@@ -54,13 +81,18 @@ public sealed record AdminUserMutationResult(
     bool? PreviousIsActive = null,
     string? NewRole = null,
     bool? NewIsActive = null);
+public sealed record AdminUserUpdateResult(bool Success, string ErrorCode, AdminUserResponse? User = null, AdminUserMutationResult? Mutation = null);
 public static class AdminUserErrorCodes
 {
+    public const string MustBeInactive = "user_must_be_inactive";
+    public const string HasLoans = "user_has_loan_history";
+    public const string InvalidRequest = "invalid_request";
     public const string InvalidRole = "invalid_role";
     public const string SelfMutation = "self_mutation";
     public const string LastAdmin = "last_active_admin";
     public const string NotFound = "user_not_found";
     public const string Conflict = "concurrent_update_conflict";
+    public const string IdentityConflict = "username_or_email_already_exists";
     public const string ActorInvalid = "actor_no_longer_active_admin";
     public const string Unavailable = "user_store_unavailable";
 }

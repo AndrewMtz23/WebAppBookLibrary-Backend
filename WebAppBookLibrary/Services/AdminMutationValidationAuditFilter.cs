@@ -11,13 +11,14 @@ public sealed class AdminMutationValidationAuditFilter(IServiceProvider services
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
         var action = context.HttpContext.Request.Path.Value?.EndsWith("/role", StringComparison.OrdinalIgnoreCase) == true ? "SetRole" :
-            context.HttpContext.Request.Path.Value?.EndsWith("/status", StringComparison.OrdinalIgnoreCase) == true ? "SetStatus" : null;
+            context.HttpContext.Request.Path.Value?.EndsWith("/status", StringComparison.OrdinalIgnoreCase) == true ? "SetStatus" :
+            context.HttpContext.Request.Method == HttpMethods.Put ? "Update" : null;
         if (!context.ModelState.IsValid && context.HttpContext.Request.Method == HttpMethods.Put && action is not null)
         {
             var actorId = Canonical(context.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)) ?? "unknown";
             var rawTarget = context.RouteData.Values["id"]?.ToString();
             var targetId = Canonical(rawTarget) ?? "invalid";
-            var auditAction = action == "SetRole" ? "role_change_attempt" : "status_change_attempt";
+            var auditAction = action == "SetRole" ? "role_change_attempt" : action == "SetStatus" ? "status_change_attempt" : "user_update_attempt";
             try
             {
                 var audit = services.GetService<IAdminUserAudit>();

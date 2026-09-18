@@ -2,7 +2,33 @@ using System.ComponentModel.DataAnnotations;
 
 namespace WebAppBookLibrary.Contracts.Admin;
 
-public sealed record AdminUserResponse(string Id, string Username, string DisplayName, string Email, string Role, bool IsActive, DateTime CreatedAt, DateTime UpdatedAt, DateTime? LastLoginAt);
+public sealed record AdminUserResponse(string Id, string Username, string DisplayName, string Email, string? AvatarUrl, string Role, bool IsActive, DateTime CreatedAt, DateTime UpdatedAt, DateTime? LastLoginAt);
+
+public sealed class UpdateAdminUserRequest : IValidatableObject
+{
+    [Required, StringLength(100, MinimumLength = 3)]
+    public string Username { get; init; } = string.Empty;
+    [Required, StringLength(120, MinimumLength = 1)]
+    public string DisplayName { get; init; } = string.Empty;
+    [Required, EmailAddress, StringLength(254)]
+    public string Email { get; init; } = string.Empty;
+    [StringLength(2048)]
+    public string? AvatarUrl { get; init; }
+    [Required]
+    public string Role { get; init; } = string.Empty;
+    public bool IsActive { get; init; }
+    public DateTime ExpectedUpdatedAt { get; init; }
+
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (ExpectedUpdatedAt == default)
+            yield return new ValidationResult("ExpectedUpdatedAt is required.", [nameof(ExpectedUpdatedAt)]);
+        if (!string.IsNullOrWhiteSpace(AvatarUrl) &&
+            (!Uri.TryCreate(AvatarUrl.Trim(), UriKind.Absolute, out var uri) ||
+             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
+            yield return new ValidationResult("AvatarUrl must be an absolute HTTP or HTTPS URL.", [nameof(AvatarUrl)]);
+    }
+}
 
 public sealed class AdminUserQuery : IValidatableObject
 {

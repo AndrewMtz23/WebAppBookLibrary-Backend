@@ -117,6 +117,7 @@ public class AuthController : ControllerBase
                     id = user.Id,
                     username = user.Username,
                     email = user.Email,
+                    avatarUrl = user.AvatarUrl,
                     role
                 }
             });

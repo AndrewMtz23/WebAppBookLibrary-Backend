@@ -98,6 +98,7 @@ public sealed class MongoLoanStore : ILoanStore
             var changed = await _books.UpdateOneAsync(transaction, b.Eq(x => x.Id, loan.BookId) & active & media,
                 Builders<Book>.Update.Inc(x => x.ReferenceVersion, 1), cancellationToken: ct);
             if (changed.MatchedCount != 1) throw new BookReferenceUnavailableException();
+            await UserReferenceGuard.TouchAsync(_users, transaction, loan.UserId, ct);
             await _loans.InsertOneAsync(transaction, loan, cancellationToken: ct);
             return true;
         }, cancellationToken: token);

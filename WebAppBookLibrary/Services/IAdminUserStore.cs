@@ -13,9 +13,13 @@ public interface IAdminUserStore
     Task<bool> TrySetStatusAsync(string id, bool active, DateTime updatedAtUtc, CancellationToken token);
     Task<AdminStoreMutationResult> SetRoleSafelyAsync(string actorId, string targetId, string role, DateTime updatedAtUtc, CancellationToken token);
     Task<AdminStoreMutationResult> SetStatusSafelyAsync(string actorId, string targetId, bool active, DateTime updatedAtUtc, CancellationToken token);
+    Task<AdminStoreMutationResult> DeletePermanentlyAsync(string actorId, string targetId, CancellationToken token);
+    Task<AdminStoreMutationResult> UpdateSafelyAsync(string actorId, string targetId, AdminUserUpdateCommand command, DateTime updatedAtUtc, CancellationToken token);
 }
 
-public enum AdminStoreMutationOutcome { Success, NotFound, SelfMutation, LastAdmin, ActorInvalid, Conflict, Unavailable }
+public sealed record AdminUserUpdateCommand(string Username, string DisplayName, string Email, string? AvatarUrl, string Role, bool IsActive, DateTime ExpectedUpdatedAt);
+
+public enum AdminStoreMutationOutcome { Success, NotFound, SelfMutation, LastAdmin, ActorInvalid, IdentityConflict, Conflict, Unavailable, MustBeInactive, HasLoans }
 
 public sealed record AdminStoreMutationResult(
     AdminStoreMutationOutcome Outcome,
@@ -24,7 +28,8 @@ public sealed record AdminStoreMutationResult(
     string? PreviousRole = null,
     bool? PreviousIsActive = null,
     string? NewRole = null,
-    bool? NewIsActive = null)
+    bool? NewIsActive = null,
+    User? UpdatedUser = null)
 {
     public static readonly AdminStoreMutationResult Success = new(AdminStoreMutationOutcome.Success);
     public static readonly AdminStoreMutationResult NotFound = new(AdminStoreMutationOutcome.NotFound);

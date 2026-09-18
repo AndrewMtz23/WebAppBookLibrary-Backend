@@ -13,6 +13,7 @@ public sealed class ProfileService(IUserStore users)
             string.IsNullOrWhiteSpace(user.DisplayName) ? user.Username : user.DisplayName,
             user.Username,
             user.Email,
+            user.AvatarUrl,
             user.Role,
             user.CreatedAt,
             user.LastLoginAt);

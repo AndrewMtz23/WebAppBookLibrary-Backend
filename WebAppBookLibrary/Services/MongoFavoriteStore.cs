@@ -39,6 +39,7 @@ public sealed class MongoFavoriteStore : IFavoriteStore
             var changed = await _books.UpdateOneAsync(transaction, b => b.Id == favorite.BookId && b.IsActive,
                 Builders<Book>.Update.Inc(b => b.ReferenceVersion, 1), cancellationToken: ct);
             if (changed.MatchedCount != 1) throw new BookReferenceUnavailableException();
+            await UserReferenceGuard.TouchAsync(_users, transaction, favorite.UserId, ct);
             await _favorites.InsertOneAsync(transaction, favorite, cancellationToken: ct);
             return true;
         }, cancellationToken: token);

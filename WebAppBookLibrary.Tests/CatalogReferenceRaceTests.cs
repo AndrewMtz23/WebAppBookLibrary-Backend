@@ -15,6 +15,8 @@ public sealed class CatalogReferenceRaceTests
         var books = new MongoBookStore(database);
         var favorites = new MongoFavoriteStore(database);
         var loans = new MongoLoanStore(database);
+        var userId = ObjectId.GenerateNewId().ToString();
+        await database.Users.InsertOneAsync(new User { Id = userId });
         for (var iteration = 0; iteration < 20; iteration++)
         {
             var id = ObjectId.GenerateNewId().ToString();
@@ -25,8 +27,8 @@ public sealed class CatalogReferenceRaceTests
                 await start.Task;
                 try
                 {
-                    if (iteration % 2 == 0) await favorites.InsertAsync(new Favorite { Id = ObjectId.GenerateNewId().ToString(), BookId = id, UserId = ObjectId.GenerateNewId().ToString() }, default);
-                    else await loans.InsertLoanAsync(new Loan { Id = ObjectId.GenerateNewId().ToString(), BookId = id, UserId = ObjectId.GenerateNewId().ToString(), MediaType = "digital" }, default);
+                    if (iteration % 2 == 0) await favorites.InsertAsync(new Favorite { Id = ObjectId.GenerateNewId().ToString(), BookId = id, UserId = userId }, default);
+                    else await loans.InsertLoanAsync(new Loan { Id = ObjectId.GenerateNewId().ToString(), BookId = id, UserId = userId, MediaType = "digital" }, default);
                 }
                 catch (BookReferenceUnavailableException) { }
             }
