@@ -77,6 +77,12 @@ public class LoanService
             await _loanStore.InsertLoanAsync(loan, token);
             return new(true, string.Empty, loan);
         }
+        catch (UserReferenceUnavailableException)
+        {
+            if (physical && !await RollbackInventoryAsync(bookId, loanId, legacyPhysical, nowUtc))
+                return Failure(LoanOperationErrorCodes.ReservationRollbackFailed);
+            return Failure(LoanOperationErrorCodes.InvalidUser);
+        }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             if (physical && !await RollbackInventoryAsync(bookId, loanId, legacyPhysical, nowUtc))

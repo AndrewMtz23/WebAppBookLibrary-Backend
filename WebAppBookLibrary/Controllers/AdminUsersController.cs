@@ -29,6 +29,22 @@ public sealed class AdminUsersController : ControllerBase
         return user is null ? ApiProblemFactory.Result(404, "User not found") : Ok(user);
     }
 
+    [HttpDelete("{id}/permanent")]
+    public async Task<IActionResult> DeletePermanently(string id, CancellationToken token)
+    {
+        if (!ObjectId.TryParse(id, out _)) return await InvalidIdentifierAsync("user_delete_attempt");
+        var actorId = CanonicalId(ActorId());
+        var targetId = CanonicalId(id);
+        var result = await service.DeletePermanentlyAsync(actorId, targetId, token);
+        await audit.UserChangedAsync("user_delete_attempt", actorId, targetId, AuditMetadata(result, false));
+        return result.ErrorCode switch
+        {
+            AdminUserErrorCodes.MustBeInactive => ApiProblemFactory.Result(409, "Deactivate the account before permanent deletion"),
+            AdminUserErrorCodes.HasLoans => ApiProblemFactory.Result(409, "Accounts with loan history cannot be permanently deleted"),
+            _ => MutationResult(result)
+        };
+    }
+
     [HttpPut("{id}/role")]
     public async Task<IActionResult> SetRole(string id, SetUserRoleRequest request, CancellationToken token)
     {

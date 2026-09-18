@@ -22,4 +22,6 @@ public class User
     public DateTime? LastLoginAt { get; set; }
     public bool IsActive { get; set; } = true;
     public string Role { get; set; } = RoleNames.User;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long ReferenceVersion { get; set; }
 }

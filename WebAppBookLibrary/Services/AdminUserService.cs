@@ -30,6 +30,9 @@ public sealed class AdminUserService(IAdminUserStore store)
         return Map(await store.SetStatusSafelyAsync(actorId, targetId, active, at, token));
     }
 
+    public async Task<AdminUserMutationResult> DeletePermanentlyAsync(string actorId, string targetId, CancellationToken token) =>
+        Map(await store.DeletePermanentlyAsync(actorId, targetId, token));
+
     public async Task<AdminUserUpdateResult> UpdateAsync(string actorId, string targetId, UpdateAdminUserRequest request, DateTime at, CancellationToken token)
     {
         if (!RoleNames.TryNormalize(request.Role, out var role))
@@ -62,6 +65,8 @@ public sealed class AdminUserService(IAdminUserStore store)
         AdminStoreMutationOutcome.LastAdmin => AdminUserErrorCodes.LastAdmin,
         AdminStoreMutationOutcome.ActorInvalid => AdminUserErrorCodes.ActorInvalid,
         AdminStoreMutationOutcome.IdentityConflict => AdminUserErrorCodes.IdentityConflict,
+        AdminStoreMutationOutcome.MustBeInactive => AdminUserErrorCodes.MustBeInactive,
+        AdminStoreMutationOutcome.HasLoans => AdminUserErrorCodes.HasLoans,
         AdminStoreMutationOutcome.Unavailable => AdminUserErrorCodes.Unavailable,
         _ => AdminUserErrorCodes.Conflict
     }, result.ActorUsername, result.TargetUsername, result.PreviousRole, result.PreviousIsActive, result.NewRole, result.NewIsActive);
@@ -79,6 +84,8 @@ public sealed record AdminUserMutationResult(
 public sealed record AdminUserUpdateResult(bool Success, string ErrorCode, AdminUserResponse? User = null, AdminUserMutationResult? Mutation = null);
 public static class AdminUserErrorCodes
 {
+    public const string MustBeInactive = "user_must_be_inactive";
+    public const string HasLoans = "user_has_loan_history";
     public const string InvalidRequest = "invalid_request";
     public const string InvalidRole = "invalid_role";
     public const string SelfMutation = "self_mutation";

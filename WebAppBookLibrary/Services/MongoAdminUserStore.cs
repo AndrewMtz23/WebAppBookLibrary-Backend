@@ -61,7 +61,10 @@ public sealed class MongoAdminUserStore : IAdminUserStore
     public Task<AdminStoreMutationResult> UpdateSafelyAsync(string actorId, string targetId, AdminUserUpdateCommand command, DateTime at, CancellationToken token) =>
         MutateSafelyAsync(actorId, targetId, null, null, command, at, token);
 
-    private async Task<AdminStoreMutationResult> MutateSafelyAsync(string actorId, string targetId, string? role, bool? active, AdminUserUpdateCommand? command, DateTime at, CancellationToken token)
+    public Task<AdminStoreMutationResult> DeletePermanentlyAsync(string actorId, string targetId, CancellationToken token) =>
+        MutateSafelyAsync(actorId, targetId, null, null, null, DateTime.UtcNow, token, permanent: true);
+
+    private async Task<AdminStoreMutationResult> MutateSafelyAsync(string actorId, string targetId, string? role, bool? active, AdminUserUpdateCommand? command, DateTime at, CancellationToken token, bool permanent = false)
     {
         if (!ObjectId.TryParse(actorId, out var actorObjectId)) return AdminStoreMutationResult.ActorInvalid;
         if (!ObjectId.TryParse(targetId, out var targetObjectId)) return AdminStoreMutationResult.NotFound;
@@ -105,14 +108,30 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                     nextRole,
                     nextActive);
                 var changesOwnUsername = command is not null && !string.Equals(target.Username, command.Username, StringComparison.Ordinal);
-                if (canonicalActorId == canonicalTargetId && (nextRole != RoleNames.Admin || !nextActive || changesOwnUsername))
+                if (canonicalActorId == canonicalTargetId && (permanent || nextRole != RoleNames.Admin || !nextActive || changesOwnUsername))
                     return snapshot with { Outcome = AdminStoreMutationOutcome.SelfMutation };
 
-                var removesAdmin = target.Role == RoleNames.Admin && target.IsActive && (nextRole != RoleNames.Admin || !nextActive);
+                var removesAdmin = target.Role == RoleNames.Admin && target.IsActive && (permanent || nextRole != RoleNames.Admin || !nextActive);
                 if (removesAdmin && await _users.CountDocumentsAsync(transaction, user => user.Role == RoleNames.Admin && user.IsActive, cancellationToken: transactionToken) <= 1)
                     return snapshot with { Outcome = AdminStoreMutationOutcome.LastAdmin };
 
-                var update = Builders<User>.Update.Set(user => user.UpdatedAt, at);
+                if (permanent)
+                {
+                    if (target.IsActive) return snapshot with { Outcome = AdminStoreMutationOutcome.MustBeInactive };
+                    var loans = _users.Database.GetCollection<Loan>("Loans");
+                    if (await loans.Find(transaction, loan => loan.UserId == canonicalTargetId).AnyAsync(transactionToken))
+                        return snapshot with { Outcome = AdminStoreMutationOutcome.HasLoans };
+                    // The delete conflicts with in-flight reference writes on the same user document.
+                    var deleted = await _users.DeleteOneAsync(transaction, user => user.Id == canonicalTargetId, cancellationToken: transactionToken);
+                    if (deleted.DeletedCount != 1) return snapshot with { Outcome = AdminStoreMutationOutcome.Conflict };
+                    await _users.Database.GetCollection<Favorite>("Favorites").DeleteManyAsync(transaction,
+                        favorite => favorite.UserId == canonicalTargetId, cancellationToken: transactionToken);
+                    return snapshot;
+                }
+
+                // Return the same millisecond precision MongoDB persists for the next concurrency check.
+                var updatedAt = new BsonDateTime(at).ToUniversalTime();
+                var update = Builders<User>.Update.Set(user => user.UpdatedAt, updatedAt);
                 if (command is not null)
                 {
                     update = update
@@ -141,7 +160,7 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                 target.AvatarUrl = command.AvatarUrl;
                 target.Role = command.Role;
                 target.IsActive = command.IsActive;
-                target.UpdatedAt = at;
+                target.UpdatedAt = updatedAt;
                 return snapshot with { UpdatedUser = target };
             }, new TransactionOptions(readConcern: ReadConcern.Snapshot, writeConcern: WriteConcern.WMajority), token);
         }

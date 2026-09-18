@@ -29,6 +29,10 @@ public sealed class FavoriteService(IFavoriteStore store)
             await store.InsertAsync(favorite, token);
             return new(true, string.Empty, favorite);
         }
+        catch (UserReferenceUnavailableException)
+        {
+            return new(false, FavoriteErrorCodes.InvalidUser);
+        }
         catch (BookReferenceUnavailableException)
         {
             return new(false, FavoriteErrorCodes.BookNotFound);

@@ -125,6 +125,7 @@ public sealed class AdminUserServiceTests
             if (Target is null) return Task.FromResult(AdminStoreMutationResult.NotFound);
             Updates++; return Task.FromResult(AdminStoreMutationResult.Success);
         }
+        public Task<AdminStoreMutationResult> DeletePermanentlyAsync(string actorId, string targetId, CancellationToken token) => throw new NotSupportedException();
         public Task<AdminStoreMutationResult> UpdateSafelyAsync(string actorId, string targetId, AdminUserUpdateCommand command, DateTime updatedAtUtc, CancellationToken token)
         {
             if (actorId == targetId && (command.Role != RoleNames.Admin || !command.IsActive)) return Task.FromResult(AdminStoreMutationResult.SelfMutation);
