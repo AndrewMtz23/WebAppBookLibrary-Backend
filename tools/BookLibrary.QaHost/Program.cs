@@ -47,6 +47,11 @@ var books = new[] {
     new Book { Id = ObjectId.GenerateNewId().ToString(), Title = "Archivo inactivo", Authors = ["Ana Ejemplo"], Description = "Título inactivo sin referencias que permite comprobar el borrado definitivo local.", Genres = ["Ensayo"], MediaType = "physical", TotalCopies = 1, AvailableCopies = 1, IsActive = false }
 };
 await mongo.Books.InsertManyAsync(books);
+// An overdue record is a fixed QA scenario, independent of mutations by other journeys.
+var overdueBook = new Book { Id = ObjectId.GenerateNewId().ToString(), Title = "Reserva vencida de prueba", Authors = ["Autor de prueba"], Description = "Ejemplar reservado para conciliar el indicador de vencimientos.", Genres = ["Ensayo"], MediaType = "physical", TotalCopies = 1, AvailableCopies = 0 };
+await mongo.Books.InsertOneAsync(overdueBook);
+var overdueUser = identities.Single(user => user.Role == "user");
+await mongo.Loans.InsertOneAsync(new Loan { Id = ObjectId.GenerateNewId().ToString(), BookId = overdueBook.Id, UserId = overdueUser.Id, MediaType = "physical", Status = "active", ReservedAt = DateTime.UtcNow.AddDays(-20), LoanDate = DateTime.UtcNow.AddDays(-20), DueAt = DateTime.UtcNow.AddDays(-1), CreatedBy = overdueUser.Username, ActiveReservationKey = $"{overdueUser.Id}:{overdueBook.Id}" });
 var auditNow = DateTime.UtcNow;
 var auditEvents = Enumerable.Range(0, 10).Select(index => new LogEntry {
     Id = ObjectId.GenerateNewId().ToString(), Timestamp = auditNow.AddMinutes(-14).AddMinutes(index),

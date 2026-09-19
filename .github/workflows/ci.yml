@@ -15,6 +15,10 @@ jobs:
       BOOK_LIBRARY_TEST_MONGO_URI: mongodb://127.0.0.1:27184/?replicaSet=booklibraryqa
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan secret history
+        run: bash scripts/scan-secret-history.sh
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

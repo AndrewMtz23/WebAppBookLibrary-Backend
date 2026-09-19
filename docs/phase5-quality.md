@@ -1,6 +1,6 @@
 # Phase 5: verification and release operations
 
-Local evidence, 2026-09-18. This is progress toward release, not authorization to deploy or a declaration that every phase-5 gate is closed.
+Updated 2026-09-19: **251 backend tests passed, zero skipped**, including real Mongo readiness, unavailable dependency, production auth throttling, route-safe metrics/correlation, and BSON migration/recovery rehearsal. Production NuGet dependencies report no known vulnerabilities. See [current operations and remaining external gates](release-operations.md). The sections below preserve the first-delivery commands and historical evidence; their older counts are not the latest result.
 
 ## Reproducible backend checks
 
