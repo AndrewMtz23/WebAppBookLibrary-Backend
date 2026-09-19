@@ -34,9 +34,9 @@ public sealed class MongoLoanStore : ILoanStore
     {
         var loan = await FindLoanAsync(id, token);
         if (loan is null) return null;
-        var title = ObjectId.TryParse(loan.BookId, out _) ? await _books.Find(b => b.Id == loan.BookId).Project(b => b.Title).FirstOrDefaultAsync(token) : null;
-        var user = ObjectId.TryParse(loan.UserId, out _) ? await _users.Find(u => u.Id == loan.UserId).Project(u => new { u.Username, u.DisplayName }).FirstOrDefaultAsync(token) : null;
-        return new(loan, title, user?.Username, user?.DisplayName);
+        var book = ObjectId.TryParse(loan.BookId, out _) ? await _books.Find(b => b.Id == loan.BookId).Project(b => new { b.Title, b.CoverUrl }).FirstOrDefaultAsync(token) : null;
+        var user = ObjectId.TryParse(loan.UserId, out _) ? await _users.Find(u => u.Id == loan.UserId).Project(u => new { u.Username, u.DisplayName, u.AvatarUrl }).FirstOrDefaultAsync(token) : null;
+        return new(loan, book?.Title, user?.Username, user?.DisplayName, book?.CoverUrl, user?.AvatarUrl);
     }
 
     public async Task<LoanHistoryPage> ReadHistoryAsync(string id, CancellationToken token)
@@ -249,13 +249,13 @@ public sealed class MongoLoanStore : ILoanStore
         var page = await SearchAsync(query, token);
         var bookIds = page.Items.Select(item => item.BookId).Distinct().ToArray();
         var userIds = page.Items.Select(item => item.UserId).Distinct().ToArray();
-        var books = await _books.Find(Builders<Book>.Filter.In(book => book.Id, bookIds)).Project(book => new { book.Id, book.Title }).ToListAsync(token);
-        var users = await _users.Find(Builders<User>.Filter.In(user => user.Id, userIds)).Project(user => new { user.Id, user.Username, user.DisplayName }).ToListAsync(token);
-        var bookNames = books.ToDictionary(item => item.Id, item => item.Title);
+        var books = await _books.Find(Builders<Book>.Filter.In(book => book.Id, bookIds)).Project(book => new { book.Id, book.Title, book.CoverUrl }).ToListAsync(token);
+        var users = await _users.Find(Builders<User>.Filter.In(user => user.Id, userIds)).Project(user => new { user.Id, user.Username, user.DisplayName, user.AvatarUrl }).ToListAsync(token);
+        var bookNames = books.ToDictionary(item => item.Id);
         var userNames = users.ToDictionary(item => item.Id);
         var entries = page.Items.Select(loan => userNames.TryGetValue(loan.UserId, out var user)
-            ? new LoanSearchEntry(loan, bookNames.GetValueOrDefault(loan.BookId), user.Username, user.DisplayName)
-            : new LoanSearchEntry(loan, bookNames.GetValueOrDefault(loan.BookId), null, null)).ToArray();
+            ? new LoanSearchEntry(loan, bookNames.GetValueOrDefault(loan.BookId)?.Title, user.Username, user.DisplayName, bookNames.GetValueOrDefault(loan.BookId)?.CoverUrl, user.AvatarUrl)
+            : new LoanSearchEntry(loan, bookNames.GetValueOrDefault(loan.BookId)?.Title, null, null, bookNames.GetValueOrDefault(loan.BookId)?.CoverUrl, null)).ToArray();
         return new(entries, page.Page, page.PageSize, page.TotalItems);
     }
 

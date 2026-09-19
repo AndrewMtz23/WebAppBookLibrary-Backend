@@ -8,4 +8,5 @@ public sealed record ProfileResponse(
     string? AvatarUrl,
     string Role,
     DateTime CreatedAt,
-    DateTime? LastLoginAt);
+    DateTime? LastLoginAt,
+    DateTime UpdatedAt);
