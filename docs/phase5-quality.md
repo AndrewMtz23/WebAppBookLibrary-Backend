@@ -52,11 +52,10 @@ Start the frontend with its `proxy.e2e.json` and follow its `docs/phase5-quality
 4. Deploy the compatible API before the client. Smoke-test each role, the unauthorized paths and a reserve/return round trip using dedicated test data. Observe error rates and latency.
 5. For a client regression, restore the previous frontend artifact; for an API regression, restore its compatible artifact. Do not edit counters by hand. Database recovery uses the verified snapshot and affected-document record, with an explicit decision about writes made after the snapshot. Remove indexes individually only when justified by compatibility.
 
-## Open release gates
+## Current release gates (2026-09-19)
 
-- Actual GitHub CI run and branch-protection rules, including a policy for the cross-repository browser gate.
-- The full six end-to-end journeys: current browser coverage includes digital registration/access and expired-session return; physical last-copy conflict, librarian create/inventory/return and dashboard overdue drilldown still need dedicated browser journeys (backend coverage is not equivalent).
-- Complete manual keyboard/200% zoom and assistive-technology review; automated axe checks cannot certify WCAG conformance.
-- Measured API latency/aggregation baseline, operational alert thresholds and liveness/readiness design. Do not report these as deployed metrics.
-- Staging snapshot, migration rehearsal, production rollout and recovery evidence.
-- Full secret-history scanning and a dedicated test of auth throttling remain separate from the checks above.
+- Backend CI passed on GitHub for `bd2cb8983fd30bffe7b69ac00f35dfd2bdd4dc6f`, run `35462182589`. Branch protection remains unconfigured.
+- The client now contains all six required end-to-end journeys. Its current browser results and integrated CI evidence are recorded in the frontend quality document.
+- Human assistive-technology and actual browser 200% zoom review remain open; automated keyboard, CSS magnification and axe checks do not certify WCAG conformance.
+- Local latency baseline, proposed alert thresholds, liveness/readiness, production auth-throttling verification and redacted full-history secret scanning are implemented. See `release-operations.md`; telemetry export and operational alerts are not deployed.
+- The BSON backup/migration/restore rehearsal passed only against disposable local MongoDB. Authorized staging snapshot, migration reconciliation, production rollout and recovery evidence remain external gates.
