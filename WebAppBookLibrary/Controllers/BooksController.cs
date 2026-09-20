@@ -24,6 +24,7 @@ public class BooksController : ControllerBase
     }
 
     [HttpGet]
+    [AllowAnonymous]
     public async Task<IActionResult> GetAll([FromQuery(Name = "")] BookQuery query, CancellationToken cancellationToken)
     {
         var page = await _bookService.SearchAsync(query, User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian), User.Identity?.Name, cancellationToken);
@@ -31,12 +32,14 @@ public class BooksController : ControllerBase
     }
 
     [HttpGet("facets")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetFacets(CancellationToken cancellationToken)
     {
         return Ok(await _bookService.GetGenreFacetsAsync(cancellationToken));
     }
 
     [HttpGet("{id}")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetById(string id, CancellationToken cancellationToken = default)
     {
         if (!ObjectId.TryParse(id, out _))
