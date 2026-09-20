@@ -73,6 +73,7 @@ public static class Program
 
     private static void ConfigurePipeline(WebApplication app)
     {
+        app.UseMiddleware<OperationalMetricsMiddleware>();
         app.UseMiddleware<RequestObservationMiddleware>();
         app.UseExceptionHandler(exceptionApp =>
             exceptionApp.Run(context =>
@@ -230,6 +231,7 @@ public static class Program
         services.AddHttpContextAccessor();
         ConfigureAuthorizationPolicies(services);
         ConfigureRateLimiting(services);
+        services.AddScoped<IReadinessProbe, MongoReadinessProbe>();
     }
 
     private static void ConfigureRateLimiting(IServiceCollection services)

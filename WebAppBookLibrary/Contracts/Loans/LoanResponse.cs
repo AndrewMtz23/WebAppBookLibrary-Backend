@@ -5,7 +5,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace WebAppBookLibrary.Contracts.Loans;
 
-public sealed record LoanResponse(string Id, string BookId, string UserId, string MediaType, string Status, DateTime ReservedAt, DateTime? DueAt, DateTime? ReturnedAt, DateTime? CancelledAt, string? Notes, string? BookTitle = null, string? Username = null, string? DisplayName = null)
+public sealed record LoanResponse(string Id, string BookId, string UserId, string MediaType, string Status, DateTime ReservedAt, DateTime? DueAt, DateTime? ReturnedAt, DateTime? CancelledAt, string? Notes, string? BookTitle = null, string? Username = null, string? DisplayName = null, string? BookCoverUrl = null, string? UserAvatarUrl = null)
 {
     public static LoanResponse From(Loan loan, DateTime nowUtc) => new(
         loan.Id, loan.BookId, loan.UserId,

@@ -10,6 +10,39 @@ public sealed class AdminUserConcurrencyTests
 {
     [LocalMongoFact]
     [Trait("Category", "LocalMongo")]
+    public Task Consecutive_updates_accept_returned_version_but_reject_stale_version() => StaffReviewRegressionTests.WithDatabase(async db =>
+    {
+        var users = db.GetCollection<User>("Users");
+        var actor = User(ObjectId.GenerateNewId().ToString(), "editor-admin");
+        var target = User(ObjectId.GenerateNewId().ToString(), "edited-user");
+        target.Role = RoleNames.User;
+        await users.InsertManyAsync([actor, target]);
+        var store = new MongoAdminUserStore(users);
+        var initial = (await store.FindByIdAsync(target.Id, default))!;
+        var command = new AdminUserUpdateCommand(target.Username, "First edit", target.Email, null,
+            target.Role, true, initial.UpdatedAt);
+        var at = initial.UpdatedAt.AddSeconds(1).AddTicks(1234);
+
+        var first = await store.UpdateSafelyAsync(actor.Id, target.Id, command, at, default);
+        Assert.Equal(AdminStoreMutationOutcome.Success, first.Outcome);
+        Assert.NotNull(first.UpdatedUser);
+        var secondCommand = command with { DisplayName = "Second edit", ExpectedUpdatedAt = first.UpdatedUser.UpdatedAt };
+        var second = await store.UpdateSafelyAsync(actor.Id, target.Id, secondCommand, at.AddSeconds(1), default);
+
+        Assert.Equal(AdminStoreMutationOutcome.Success, second.Outcome);
+        Assert.NotNull(second.UpdatedUser);
+        var persisted = (await store.FindByIdAsync(target.Id, default))!;
+        Assert.Equal("Second edit", persisted.DisplayName);
+        Assert.Equal(persisted.UpdatedAt, second.UpdatedUser.UpdatedAt);
+
+        var stale = await store.UpdateSafelyAsync(actor.Id, target.Id,
+            secondCommand with { DisplayName = "Stale edit" }, at.AddSeconds(2), default);
+        Assert.Equal(AdminStoreMutationOutcome.Conflict, stale.Outcome);
+        Assert.Equal("Second edit", (await store.FindByIdAsync(target.Id, default))!.DisplayName);
+    });
+
+    [LocalMongoFact]
+    [Trait("Category", "LocalMongo")]
     public Task Two_active_admins_cannot_remove_each_other_and_leave_no_active_admin() => StaffReviewRegressionTests.WithDatabase(async db =>
     {
         var users = db.GetCollection<User>("Users");

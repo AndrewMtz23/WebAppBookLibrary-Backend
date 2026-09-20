@@ -16,9 +16,12 @@ public class User
     public string PasswordHash { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string NormalizedEmail { get; set; } = string.Empty;
+    public string? AvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastLoginAt { get; set; }
     public bool IsActive { get; set; } = true;
     public string Role { get; set; } = RoleNames.User;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long ReferenceVersion { get; set; }
 }

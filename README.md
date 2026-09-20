@@ -67,12 +67,15 @@ Never commit `.env`. For production, inject secrets through the hosting platform
 | `POST`, `DELETE` | `/api/favorites/{bookId}` | User |
 | `GET` | `/api/admin/users`, `/api/admin/users/{id}` | Admin |
 | `PUT` | `/api/admin/users/{id}/role`, `/api/admin/users/{id}/status` | Admin |
+| `DELETE` | `/api/admin/users/{id}/permanent` | Admin; inactive accounts without loan history only |
 | `GET` | `/api/dashboard/reader` | User |
 | `GET` | `/api/dashboard/librarian` | Librarian or admin |
 | `GET` | `/api/dashboard/admin` | Admin |
 | `GET` | `/api/log/recent`, `/api/log/count/{level}` | Admin |
 
 New phase-2 endpoints return explicit response DTOs in camelCase. Errors use Problem Details and never expose internal exception messages, credential hashes, schema fields, or loan correlation fields.
+
+User logical deletion uses `PUT /api/admin/users/{id}/status` with `isActive: false`; it preserves data, revokes access and can be reversed. Permanent deletion requires an inactive account without any loan history, removes its favorites in the same transaction, and preserves audit records. Self-deletion is prohibited. A conflict returns 409; a missing account returns 404. New loan/favorite writes serialize against account deactivation and deletion to prevent orphan references.
 
 ## Book schema migration
 

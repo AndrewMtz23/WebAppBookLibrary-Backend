@@ -77,6 +77,12 @@ public class LoanService
             await _loanStore.InsertLoanAsync(loan, token);
             return new(true, string.Empty, loan);
         }
+        catch (UserReferenceUnavailableException)
+        {
+            if (physical && !await RollbackInventoryAsync(bookId, loanId, legacyPhysical, nowUtc))
+                return Failure(LoanOperationErrorCodes.ReservationRollbackFailed);
+            return Failure(LoanOperationErrorCodes.InvalidUser);
+        }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             if (physical && !await RollbackInventoryAsync(bookId, loanId, legacyPhysical, nowUtc))
@@ -113,7 +119,7 @@ public class LoanService
     {
         var entry = await _loanStore.FindDetailAsync(id, token);
         if (entry is null) return null;
-        var loan = LoanResponse.From(entry.Loan, DateTime.UtcNow) with { BookTitle = entry.BookTitle, Username = entry.Username, DisplayName = entry.DisplayName, Notes = null };
+        var loan = LoanResponse.From(entry.Loan, DateTime.UtcNow) with { BookTitle = entry.BookTitle, Username = entry.Username, DisplayName = entry.DisplayName, BookCoverUrl = entry.BookCoverUrl, UserAvatarUrl = entry.UserAvatarUrl, Notes = null };
         var audit = await _loanStore.ReadHistoryAsync(id, token);
         var history = audit.Events.ToList();
         void Recorded(string type, DateTime? date)
@@ -130,7 +136,7 @@ public class LoanService
     public async Task<PagedResult<LoanResponse>> SearchAsync(LoanQuery query, CancellationToken token)
     {
         var page = await _loanStore.SearchDetailsAsync(query.Normalize(), token);
-        return new(page.Items.Select(item => LoanResponse.From(item.Loan, DateTime.UtcNow) with { BookTitle = item.BookTitle, Username = item.Username, DisplayName = item.DisplayName }).ToArray(), page.Page, page.PageSize, page.TotalItems);
+        return new(page.Items.Select(item => LoanResponse.From(item.Loan, DateTime.UtcNow) with { BookTitle = item.BookTitle, Username = item.Username, DisplayName = item.DisplayName, BookCoverUrl = item.BookCoverUrl, UserAvatarUrl = item.UserAvatarUrl }).ToArray(), page.Page, page.PageSize, page.TotalItems);
     }
 
     public async Task<PagedResult<LoanResponse>?> SearchMineAsync(string username, LoanQuery query, CancellationToken token)

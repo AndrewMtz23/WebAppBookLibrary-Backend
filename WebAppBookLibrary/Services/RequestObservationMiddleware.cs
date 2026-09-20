@@ -7,6 +7,8 @@ public sealed class RequestObservationMiddleware(RequestDelegate next, ILogger<R
     public async Task InvokeAsync(HttpContext context, MongoDBService database)
     {
         await next(context);
+        // Readiness must finish even when MongoDB is unavailable; never persist its failure into MongoDB.
+        if (context.Request.Path.StartsWithSegments("/api/health")) return;
         var status = context.Response.StatusCode;
         if (status is not (401 or 403 or 409) && status < 500) return;
         try

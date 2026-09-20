@@ -50,4 +50,4 @@ public interface ILoanStore
     Task<bool> DeleteLoanAsync(string loanId);
 }
 
-public sealed record LoanSearchEntry(Loan Loan, string? BookTitle, string? Username, string? DisplayName);
+public sealed record LoanSearchEntry(Loan Loan, string? BookTitle, string? Username, string? DisplayName, string? BookCoverUrl = null, string? UserAvatarUrl = null);

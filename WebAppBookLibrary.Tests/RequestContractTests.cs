@@ -2,12 +2,44 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using WebAppBookLibrary.Contracts.Books;
 using WebAppBookLibrary.Contracts.Loans;
+using WebAppBookLibrary.Contracts.Admin;
 using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Tests;
 
 public class RequestContractTests
 {
+    [Fact]
+    public void Admin_user_contract_exposes_profile_image_and_full_update_request()
+    {
+        Assert.Contains(typeof(AdminUserResponse).GetProperties(), property => property.Name == "AvatarUrl");
+        var requestType = typeof(AdminUserResponse).Assembly.GetType("WebAppBookLibrary.Contracts.Admin.UpdateAdminUserRequest");
+        Assert.NotNull(requestType);
+        Assert.Equal(
+            ["AvatarUrl", "DisplayName", "Email", "ExpectedUpdatedAt", "IsActive", "Role", "Username"],
+            requestType!.GetProperties().Select(property => property.Name).Order().ToArray());
+    }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("/relative/avatar.jpg")]
+    [InlineData("ftp://example.test/avatar.jpg")]
+    public void Admin_user_update_rejects_unsafe_avatar_urls(string avatarUrl)
+    {
+        var request = new UpdateAdminUserRequest
+        {
+            Username = "ana-reader",
+            DisplayName = "Ana Reader",
+            Email = "ana@example.test",
+            AvatarUrl = avatarUrl,
+            Role = "user",
+            IsActive = true,
+            ExpectedUpdatedAt = DateTime.UtcNow
+        };
+
+        Assert.False(IsValid(request));
+    }
+
     [Fact]
     public void Book_input_does_not_allow_identity_or_availability_assignment()
     {

@@ -10,14 +10,75 @@ permissions:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BOOK_LIBRARY_TEST_MONGO_URI: mongodb://127.0.0.1:27184/?replicaSet=booklibraryqa
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan secret history
+        run: bash scripts/scan-secret-history.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check sensitive files
+        run: python scripts/check-sensitive-files.py
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
       - name: Restore
-        run: dotnet restore WebAppBookLibrary.sln
+        run: dotnet restore WebAppBookLibrary.sln --locked-mode
+      - name: Start isolated MongoDB replica set
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name booklibrary-mongo --network host mongo:8.0.28 \
+            --replSet booklibraryqa --bind_ip 127.0.0.1 --port 27184
+          ready=false
+          for attempt in {1..40}; do
+            if docker exec booklibrary-mongo mongosh --port 27184 --quiet --eval 'db.adminCommand({ping:1})' >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+          docker exec booklibrary-mongo mongosh --port 27184 --quiet --eval 'rs.initiate({_id:"booklibraryqa",members:[{_id:0,host:"127.0.0.1:27184"}]})'
+          ready=false
+          for attempt in {1..40}; do
+            if docker exec booklibrary-mongo mongosh --port 27184 --quiet --eval 'quit(db.hello().isWritablePrimary ? 0 : 1)' >/dev/null 2>&1; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
       - name: Build
         run: dotnet build WebAppBookLibrary.sln -c Release --no-restore
       - name: Test
-        run: dotnet test WebAppBookLibrary.sln -c Release --no-build --verbosity normal
+        run: dotnet test WebAppBookLibrary.sln -c Release --no-build --logger trx --results-directory TestResults --collect:"XPlat Code Coverage"
+      - name: Reject missing or skipped tests
+        shell: pwsh
+        run: |
+          $reports = @(Get-ChildItem TestResults -Filter *.trx -Recurse)
+          if ($reports.Count -eq 0) { throw 'No test reports were produced.' }
+          foreach ($report in $reports) {
+            [xml]$result = Get-Content $report.FullName
+            $counts = $result.TestRun.ResultSummary.Counters
+            if ([int]$counts.total -eq 0 -or [int]$counts.total -ne [int]$counts.passed) {
+              throw 'Every discovered test must run and pass, including MongoDB integration tests.'
+            }
+          }
+      - name: Test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: TestResults/
+      - name: MongoDB diagnostics
+        if: failure()
+        run: docker logs booklibrary-mongo
+      - name: Stop test database
+        if: always()
+        run: docker rm -f booklibrary-mongo

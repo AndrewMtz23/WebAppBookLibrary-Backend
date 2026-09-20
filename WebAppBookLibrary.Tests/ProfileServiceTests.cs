@@ -14,7 +14,7 @@ public sealed class ProfileServiceTests
         var store = new Mock<IUserStore>();
         store.Setup(item => item.FindByUsernameAsync("ana")).ReturnsAsync(new User
         {
-            Id = "u1", Username = "ana", DisplayName = "Ana M.", Email = "ana@example.com",
+            Id = "u1", Username = "ana", DisplayName = "Ana M.", Email = "ana@example.com", AvatarUrl = "https://images.example.test/ana.jpg",
             Role = "user", CreatedAt = createdAt, LastLoginAt = lastLoginAt, IsActive = true,
             PasswordHash = "never expose"
         });
@@ -25,6 +25,7 @@ public sealed class ProfileServiceTests
         Assert.NotNull(result);
         Assert.Equal("u1", result.Id);
         Assert.Equal("Ana M.", result.DisplayName);
+        Assert.Equal("https://images.example.test/ana.jpg", result.AvatarUrl);
         Assert.Equal(createdAt, result.CreatedAt);
         Assert.Equal(lastLoginAt, result.LastLoginAt);
     }
