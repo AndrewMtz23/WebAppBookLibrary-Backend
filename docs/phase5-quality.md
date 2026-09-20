@@ -59,3 +59,12 @@ Start the frontend with its `proxy.e2e.json` and follow its `docs/phase5-quality
 - Human assistive-technology and actual browser 200% zoom review remain open; automated keyboard, CSS magnification and axe checks do not certify WCAG conformance.
 - Local latency baseline, proposed alert thresholds, liveness/readiness, production auth-throttling verification and redacted full-history secret scanning are implemented. See `release-operations.md`; telemetry export and operational alerts are not deployed.
 - The BSON backup/migration/restore rehearsal passed only against disposable local MongoDB. Authorized staging snapshot, migration reconciliation, production rollout and recovery evidence remain external gates.
+
+
+## 2026-09-20 - Public catalog access (local)
+
+Only GET book list, facets and detail permit anonymous access. Management, mutations, profile, favorites and digital-resource access retain authentication/role policies. Public HTTP regression tests use actual MVC/JWT middleware and assert anonymous identity, active-only visibility and no resource URL disclosure.
+
+Validation: `dotnet test WebAppBookLibrary.sln -c Release` with the isolated loopback replica set passed 252 tests, zero skipped. PublicCatalogHttpTests first reproduced 401 for public reads, then passed after the endpoint change. A separate dashboard test-fixture correction keeps a future loan future relative to the live list clock, without changing production behavior. Commits: `f7043c2`, `d1466b8`.
+
+No Atlas mutations, migration, staging deployment or new remote publication. The pre-existing local deletion of `.env.example` remains unstaged. This feature does not close outstanding phase-5 staging/manual release gates.
