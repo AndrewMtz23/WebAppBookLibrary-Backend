@@ -134,7 +134,8 @@ public sealed class DashboardTask5Tests
                 2);
 
             await loans.InsertManyAsync([
-                Loan(ids[0], "physical", "active", new DateTime(2026, 8, 1, 12, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 20, 0, 0, 0, DateTimeKind.Utc)),
+                // Keep this loan future-due both at the dashboard snapshot and at the live list's clock.
+                Loan(ids[0], "physical", "active", new DateTime(2026, 8, 1, 12, 0, 0, DateTimeKind.Utc), DateTime.UtcNow.AddYears(1)),
                 Loan(ids[1], "physical", "active", new DateTime(2026, 8, 2, 12, 0, 0, DateTimeKind.Utc), new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc)),
                 Loan(ids[0], "physical", "returned", new DateTime(2026, 8, 3, 12, 0, 0, DateTimeKind.Utc), null, new DateTime(2026, 9, 10, 8, 0, 0, DateTimeKind.Utc)),
                 Loan(ids[3], "digital", "active", new DateTime(2026, 9, 10, 7, 0, 0, DateTimeKind.Utc), null),
