@@ -65,6 +65,7 @@ public static class Program
             options.AddPolicy(
                 PolicyNames.ViewSecurity,
                 policy => policy.RequireRole(RoleNames.Admin));
+            options.AddPolicy(PolicyNames.ManageCategories, policy => policy.RequireRole(RoleNames.Admin));
             options.AddPolicy(
                 PolicyNames.ManageUsers,
                 policy => policy.RequireRole(RoleNames.Admin));
@@ -219,6 +220,7 @@ public static class Program
         services.AddScoped<IAdminUserStore, MongoAdminUserStore>();
         services.AddScoped<IDashboardStore, MongoDashboardStore>();
         services.AddScoped<BookService>();
+        services.AddScoped<CategoryService>();
         services.AddScoped<FavoriteService>();
         services.AddScoped<AdminUserService>();
         services.AddScoped<DashboardService>();

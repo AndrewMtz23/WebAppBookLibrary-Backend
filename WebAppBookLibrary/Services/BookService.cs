@@ -10,12 +10,16 @@ public sealed class BookService
 {
     private readonly IBookStore _store;
     private readonly Logservice? _log;
+    private readonly CategoryService? _categories;
+    public BookService(IBookStore store, Logservice log, CategoryService categories) : this(store, log) => _categories = categories;
     public BookService(IBookStore store) => _store = store;
     public BookService(IBookStore store, Logservice log) : this(store) => _log = log;
 
     public async Task<PagedResult<BookSummaryResponse>> SearchAsync(BookQuery query, bool includeInactive, string? viewerUsername, CancellationToken token)
     {
-        var page = await _store.SearchAsync(query.Normalize(), includeInactive, viewerUsername, token);
+        var normalized = _categories is null ? query.Normalize() : await _categories.ResolveQueryAsync(query.Normalize(), token);
+        var page = await _store.SearchAsync(normalized, includeInactive, viewerUsername, token);
+        if (_categories is not null) await _categories.EnrichAsync(page.Items.Select(i => i.Book), token);
         return new(page.Items.Select(item => BookMapper.ToSummary(item.Book, item.ReservationCount, item.IsFavorite)).ToArray(), page.Page, page.PageSize, page.TotalItems);
     }
 
@@ -27,6 +31,7 @@ public sealed class BookService
     public async Task<BookManagementResponse?> GetManagementAsync(string id, CancellationToken token)
     {
         var book = await _store.FindByIdAsync(id, token);
+        if (book is not null && _categories is not null) await _categories.EnrichAsync([book], token);
         return book is null ? null : new(BookMapper.ToDetail(book, 0, false), book.DigitalResourceUrl);
     }
 
@@ -35,6 +40,7 @@ public sealed class BookService
     public async Task<BookDetailResponse?> GetDetailAsync(string id, bool includeInactive, string? viewerUsername, CancellationToken token)
     {
         var entry = await _store.FindCatalogEntryAsync(id, includeInactive, viewerUsername, token);
+        if (entry is not null && _categories is not null) await _categories.EnrichAsync([entry.Book], token);
         return entry is null ? null : BookMapper.ToDetail(entry.Book, entry.ReservationCount, entry.IsFavorite);
     }
     public Task<BookDetailResponse?> GetDetailAsync(string id, bool includeInactive, CancellationToken token) => GetDetailAsync(id, includeInactive, null, token);
@@ -48,6 +54,8 @@ public sealed class BookService
     public async Task<BookWriteResult> CreateAsync(BookWriteRequest request, string id, DateTime nowUtc, CancellationToken token)
     {
         var book = BookMapper.ToNewEntity(request, id, nowUtc);
+        try { if (_categories is not null) await _categories.ResolveWriteAsync(book, request, null, token); }
+        catch (CategoryReferenceException e) { return new(false, e.Code, null); }
         if (book.Isbn is not null && await _store.IsbnExistsAsync(book.Isbn, null, token))
             return new(false, "isbn_conflict", null);
 
@@ -57,6 +65,7 @@ public sealed class BookService
             await LogAsync("INFORMATION", $"Book created: {book.Id}");
             return new(true, string.Empty, BookMapper.ToDetail(book, 0, false));
         }
+        catch (CategoryReferenceException e) { return new(false, e.Code, null); }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             return new(false, "isbn_conflict", null);
@@ -83,6 +92,8 @@ public sealed class BookService
             return new(false, "isbn_conflict", null);
 
         var book = BookMapper.ToUpdatedEntity(request, existing, activePhysicalLoans, nowUtc);
+        try { if (_categories is not null) await _categories.ResolveWriteAsync(book, request, existing, token); }
+        catch (CategoryReferenceException e) { return new(false, e.Code, null); }
         try
         {
             if (!await _store.ReplaceMetadataAsync(book, existing.UpdatedAt, token))
@@ -90,6 +101,7 @@ public sealed class BookService
             await LogAsync("INFORMATION", $"Book updated: {book.Id}");
             return new(true, string.Empty, BookMapper.ToDetail(book, 0, false));
         }
+        catch (CategoryReferenceException e) { return new(false, e.Code, null); }
         catch (MongoWriteException exception) when (exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             return new(false, "isbn_conflict", null);

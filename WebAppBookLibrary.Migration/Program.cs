@@ -3,6 +3,9 @@ using MongoDB.Driver;
 using WebAppBookLibrary.Configuration;
 using WebAppBookLibrary.Migrations;
 
+if (args.Contains("--categories", StringComparer.OrdinalIgnoreCase))
+    return await CategoryMigrationCommand.RunAsync(args);
+
 EnvironmentFileLoader.Load(Directory.GetCurrentDirectory());
 var apply = args.Contains("--apply", StringComparer.OrdinalIgnoreCase);
 var snapshotConfirmed = args.Contains("--snapshot-confirmed", StringComparer.OrdinalIgnoreCase);

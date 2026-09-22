@@ -30,6 +30,9 @@ public static class AuditLogEntryFactory
         };
     }
 
+    public static LogEntry CategoryChanged(string action, string actorId, string targetId, IReadOnlyDictionary<string, string>? metadata, HttpContext? context) =>
+        DomainChanged("category", action, actorId, targetId, metadata, context);
+
     public static LogEntry BookChanged(string action, string actorId, string targetId, IReadOnlyDictionary<string, string>? metadata, HttpContext? context) =>
         DomainChanged("book", action, actorId, targetId, metadata, context);
 

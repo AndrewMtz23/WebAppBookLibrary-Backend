@@ -1,3 +1,7 @@
 namespace WebAppBookLibrary.Contracts.Books;
 
-public sealed record BookDetailResponse(string Id, string Title, string? Subtitle, IReadOnlyList<string> Authors, string? Isbn, string Description, string? Publisher, DateTime? PublishedDate, string Language, int? PageCount, IReadOnlyList<string> Genres, IReadOnlyList<string> Tags, string? CoverUrl, string MediaType, int? AvailableCopies, int? TotalCopies, long ReservationCount, bool IsFavorite, bool IsActive, DateTime CreatedAt, DateTime UpdatedAt);
+public sealed record BookDetailResponse(string Id, string Title, string? Subtitle, IReadOnlyList<string> Authors, string? Isbn, string Description, string? Publisher, DateTime? PublishedDate, string Language, int? PageCount, IReadOnlyList<string> Genres, IReadOnlyList<string> Tags, string? CoverUrl, string MediaType, int? AvailableCopies, int? TotalCopies, long ReservationCount, bool IsFavorite, bool IsActive, DateTime CreatedAt, DateTime UpdatedAt)
+{
+    public IReadOnlyList<string> CategoryIds { get; init; } = [];
+    public IReadOnlyList<WebAppBookLibrary.Contracts.Categories.BookCategoryResponse> Categories { get; init; } = [];
+}
