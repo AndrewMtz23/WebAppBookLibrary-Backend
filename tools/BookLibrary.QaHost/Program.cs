@@ -50,6 +50,9 @@ await mongo.Books.InsertManyAsync(books);
 // An overdue record is a fixed QA scenario, independent of mutations by other journeys.
 var overdueBook = new Book { Id = ObjectId.GenerateNewId().ToString(), Title = "Reserva vencida de prueba", Authors = ["Autor de prueba"], Description = "Ejemplar reservado para conciliar el indicador de vencimientos.", Genres = ["Ensayo"], MediaType = "physical", TotalCopies = 1, AvailableCopies = 0 };
 await mongo.Books.InsertOneAsync(overdueBook);
+var categoryMigration = await WebAppBookLibrary.Migrations.CategorySchemaMigration.RunAsync(database,
+    new Dictionary<string, string> { ["Ensayo"] = "Ensayo", ["Narrativa"] = "Narrativa" }, true, default);
+if (categoryMigration.Anomalies.Count > 0) throw new InvalidOperationException("QA category fixture migration failed.");
 var overdueUser = identities.Single(user => user.Role == "user");
 await mongo.Loans.InsertOneAsync(new Loan { Id = ObjectId.GenerateNewId().ToString(), BookId = overdueBook.Id, UserId = overdueUser.Id, MediaType = "physical", Status = "active", ReservedAt = DateTime.UtcNow.AddDays(-20), LoanDate = DateTime.UtcNow.AddDays(-20), DueAt = DateTime.UtcNow.AddDays(-1), CreatedBy = overdueUser.Username, ActiveReservationKey = $"{overdueUser.Id}:{overdueBook.Id}" });
 var auditNow = DateTime.UtcNow;

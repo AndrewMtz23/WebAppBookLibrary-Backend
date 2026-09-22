@@ -8,6 +8,7 @@ public sealed class BookQuery
     private static readonly HashSet<string> AllowedSorts = new(StringComparer.OrdinalIgnoreCase) { "createdAt", "title", "publishedDate", "reservationCount", "relevance" };
     public string? Query { get; init; }
     public string? BookId { get; init; }
+    public string? CategoryId { get; init; }
     public string? Genre { get; init; }
     public string? MediaType { get; init; }
     public string? Language { get; init; }
@@ -36,8 +37,8 @@ public sealed class BookQuery
         normalizedSort,
         string.Equals(Direction, "asc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc",
         IncludeIdTieBreaker: true,
-        BookId: string.IsNullOrWhiteSpace(BookId) ? null : BookId.Trim());
+        BookId: string.IsNullOrWhiteSpace(BookId) ? null : BookId.Trim(), CategoryId: CategoryId?.Trim());
     }
 }
 
-public sealed record NormalizedBookQuery(string? Query, string? Genre, string? MediaType, string? Language, bool? Available, bool? IsActive, bool? LowStock, bool? MissingResource, int Page, int PageSize, string Sort, string Direction, bool IncludeIdTieBreaker, string? BookId);
+public sealed record NormalizedBookQuery(string? Query, string? Genre, string? MediaType, string? Language, bool? Available, bool? IsActive, bool? LowStock, bool? MissingResource, int Page, int PageSize, string Sort, string Direction, bool IncludeIdTieBreaker, string? BookId, string? CategoryId = null, IReadOnlyList<string>? LegacyCategoryBookIds = null, bool CategoryFilter = false);

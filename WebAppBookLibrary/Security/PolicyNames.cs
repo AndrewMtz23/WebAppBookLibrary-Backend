@@ -8,5 +8,6 @@ public static class PolicyNames
     public const string ViewAllLoans = nameof(ViewAllLoans);
     public const string ViewAudit = nameof(ViewAudit);
     public const string ViewSecurity = nameof(ViewSecurity);
+    public const string ManageCategories = nameof(ManageCategories);
     public const string ManageUsers = nameof(ManageUsers);
 }

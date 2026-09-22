@@ -20,6 +20,8 @@ public class Book
     public DateTime? PublishedDate { get; set; }
     public string Language { get; set; } = "es";
     public int? PageCount { get; set; }
+    public List<string> CategoryIds { get; set; } = [];
+    [BsonIgnore] public List<WebAppBookLibrary.Contracts.Categories.BookCategoryResponse> Categories { get; set; } = [];
     public List<string> Genres { get; set; } = [];
     public List<string> Tags { get; set; } = [];
     public string? CoverUrl { get; set; }

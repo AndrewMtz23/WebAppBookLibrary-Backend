@@ -27,8 +27,13 @@ public class BooksController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> GetAll([FromQuery(Name = "")] BookQuery query, CancellationToken cancellationToken)
     {
-        var page = await _bookService.SearchAsync(query, User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian), User.Identity?.Name, cancellationToken);
-        return Ok(page);
+        try
+        {
+            if (query.CategoryId is not null && !ObjectId.TryParse(query.CategoryId, out _)) return BookProblem(400, "Invalid category identifier", "category_ids_invalid");
+            var page = await _bookService.SearchAsync(query, User.IsInRole(RoleNames.Admin) || User.IsInRole(RoleNames.Librarian), User.Identity?.Name, cancellationToken);
+            return Ok(page);
+        }
+        catch (CategoryReferenceException e) { return BookProblem(400, "Category filters disagree", e.Code); }
     }
 
     [HttpGet("facets")]
@@ -84,7 +89,7 @@ public class BooksController : ControllerBase
         var result = await _bookService.CreateAsync(request, ObjectId.GenerateNewId().ToString(), DateTime.UtcNow, cancellationToken);
         if (!result.Success)
         {
-            return result.ErrorCode == "isbn_conflict"
+            return result.ErrorCode is "isbn_conflict" or "category_unavailable" or "category_inactive"
                 ? BookProblem(409, "ISBN already exists", result.ErrorCode)
                 : BookProblem(400, "Book could not be created", result.ErrorCode);
         }
@@ -104,6 +109,7 @@ public class BooksController : ControllerBase
         {
             "book_not_found" => ApiProblemFactory.Result(404, "Book not found"),
             "isbn_conflict" => BookProblem(409, "ISBN already exists", result.ErrorCode),
+            "category_unavailable" or "category_inactive" => BookProblem(409, "Category is no longer available", result.ErrorCode),
             "inventory_conflict" => BookProblem(409, "Total copies cannot be lower than active physical loans", result.ErrorCode),
             "concurrent_update_conflict" => BookProblem(409, "Book changed while it was being updated", result.ErrorCode),
             _ when !result.Success => BookProblem(400, "Book could not be updated", result.ErrorCode),

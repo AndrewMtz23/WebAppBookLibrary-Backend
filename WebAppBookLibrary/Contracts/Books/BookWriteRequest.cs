@@ -14,6 +14,7 @@ public sealed record BookWriteRequest : IValidatableObject
     public DateOnly? PublishedDate { get; init; }
     public string Language { get; init; } = "es";
     public int? PageCount { get; init; }
+    public IReadOnlyList<string>? CategoryIds { get; init; }
     public IReadOnlyList<string> Genres { get; init; } = [];
     public IReadOnlyList<string> Tags { get; init; } = [];
     public Uri? CoverUrl { get; init; }
@@ -35,7 +36,9 @@ public sealed record BookWriteRequest : IValidatableObject
         foreach (var error in ValidateText(effectiveDescription, nameof(Description), 20, 5000)) yield return error;
         foreach (var error in ValidateOptionalText(Publisher, nameof(Publisher), 160)) yield return error;
         foreach (var error in ValidateList(effectiveAuthors, nameof(Authors), 1, 10)) yield return error;
-        foreach (var error in ValidateList(effectiveGenres, nameof(Genres), 1, 8)) yield return error;
+        if (CategoryIds is null) { foreach (var error in ValidateList(effectiveGenres, nameof(Genres), 1, 8)) yield return error; }
+        else if (CategoryIds.Count is < 1 or > 8 || CategoryIds.Any(id => !MongoDB.Bson.ObjectId.TryParse(id, out _)) || CategoryIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() != CategoryIds.Count)
+            yield return Invalid("Seleccione entre uno y ocho IDs de categor\u00edas diferentes.", nameof(CategoryIds));
         foreach (var error in ValidateList(Tags, nameof(Tags), 0, 20)) yield return error;
 
         if (PageCount is < 1 or > 100000)

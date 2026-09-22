@@ -31,7 +31,7 @@ public sealed class ReaderEnablementContractTests
         var profile = assembly.GetType("WebAppBookLibrary.Contracts.Profile.ProfileResponse");
 
         Assert.NotNull(facet);
-        Assert.Equal(["Count", "Value"], PropertyNames(facet!));
+        Assert.Equal(["Count", "Id", "Name", "Slug", "Value"], PropertyNames(facet!));
         Assert.NotNull(profile);
         Assert.Equal(
             ["AvatarUrl", "CreatedAt", "DisplayName", "Email", "Id", "LastLoginAt", "Role", "UpdatedAt", "Username"],

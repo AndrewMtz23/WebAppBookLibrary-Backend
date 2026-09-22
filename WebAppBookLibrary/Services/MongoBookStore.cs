@@ -63,6 +63,8 @@ public sealed class MongoBookStore : IBookStore
                 filters.Add(builder.Or(builder.Regex(book => book.Title, regex), builder.Regex(book => book.Subtitle, regex), builder.Regex(book => book.Isbn, regex), builder.AnyStringIn(book => book.Authors, regex)));
             }
         }
+        if (query.CategoryId is not null || query.CategoryFilter)
+            filters.Add(builder.Or(builder.AnyEq(book => book.CategoryIds, query.CategoryId ?? "__none__"), builder.In(book => book.Id, query.LegacyCategoryBookIds ?? [])));
         if (query.Genre is not null) filters.Add(builder.Or(builder.AnyEq(book => book.Genres, query.Genre), builder.Eq(book => book.Genre, query.Genre)));
         if (query.MediaType is not null) filters.Add(query.MediaType == MediaTypes.Physical
             ? builder.Or(builder.Eq(book => book.MediaType, query.MediaType), builder.Regex(book => book.MediaType, new BsonRegularExpression("^\\s*$")), builder.Exists(book => book.MediaType, false))
@@ -103,7 +105,28 @@ public sealed class MongoBookStore : IBookStore
 
     public async Task<Book?> FindByIdAsync(string id, CancellationToken cancellationToken) => (Book?)await _books.Find(book => book.Id == id).FirstOrDefaultAsync(cancellationToken);
     public Task<bool> IsbnExistsAsync(string normalizedIsbn, string? excludingId, CancellationToken cancellationToken) => _books.Find(book => book.Isbn == normalizedIsbn && book.Id != excludingId).AnyAsync(cancellationToken);
-    public Task InsertAsync(Book book, CancellationToken cancellationToken) => _books.InsertOneAsync(book, cancellationToken: cancellationToken);
+    public async Task InsertAsync(Book book, CancellationToken cancellationToken)
+    {
+        if (book.CategoryIds.Count == 0) { await _books.InsertOneAsync(book, cancellationToken: cancellationToken); return; }
+        using var session = await _books.Database.Client.StartSessionAsync(cancellationToken: cancellationToken);
+        await session.WithTransactionAsync(async (transaction, ct) =>
+        {
+            await LockCategoriesAsync(transaction, book.CategoryIds, [], ct);
+            await _books.InsertOneAsync(transaction, book, cancellationToken: ct);
+            return true;
+        }, cancellationToken: cancellationToken);
+    }
+    private async Task LockCategoriesAsync(IClientSessionHandle session, IEnumerable<string> ids, IReadOnlyCollection<string> existing, CancellationToken ct)
+    {
+        var categories = _books.Database.GetCollection<Category>("Categories");
+        foreach (var id in ids.Order(StringComparer.Ordinal))
+        {
+            var filter = Builders<Category>.Filter.Eq(c => c.Id, id);
+            if (!existing.Contains(id)) filter &= Builders<Category>.Filter.Eq(c => c.IsActive, true);
+            var changed = await categories.UpdateOneAsync(session, filter, Builders<Category>.Update.Inc(c => c.ReferenceVersion, 1), cancellationToken: ct);
+            if (changed.MatchedCount != 1) throw new CategoryReferenceException("category_unavailable");
+        }
+    }
     public async Task<int> CountActivePhysicalLoansAsync(string bookId, CancellationToken cancellationToken)
     {
         var builder = Builders<Loan>.Filter;
@@ -124,6 +147,7 @@ public sealed class MongoBookStore : IBookStore
             var current = await _books.FindOneAndUpdateAsync(transaction, filter, Builders<Book>.Update.Inc(b => b.ReferenceVersion, 1),
                 new FindOneAndUpdateOptions<Book, Book> { ReturnDocument = ReturnDocument.After }, ct);
             if (current is null) return false;
+            await LockCategoriesAsync(transaction, book.CategoryIds, current.CategoryIds, ct);
             var held = current.MediaType == MediaTypes.Physical
                 ? Math.Max(0, (current.TotalCopies ?? 1) - (current.AvailableCopies ?? (current.IsAvailable ? 1 : 0))) : 0;
             if (held > 0 && (book.MediaType != current.MediaType || book.TotalCopies < held)) return false;
@@ -156,28 +180,34 @@ public sealed class MongoBookStore : IBookStore
 
     public async Task<IReadOnlyList<BookFacetResponse>> GetGenreFacetsAsync(CancellationToken token)
     {
-        var pipeline = new[]
+        var active = Builders<Book>.Filter.Ne(b => b.IsActive, false);
+        var books = await _books.Find(active).Project(b => new Book { CategoryIds = b.CategoryIds, Genres = b.Genres, Genre = b.Genre }).ToListAsync(token);
+        var categories = await _books.Database.GetCollection<Category>("Categories").Find(Builders<Category>.Filter.Empty).ToListAsync(token);
+        var rows = new Dictionary<string, BookFacetResponse>();
+        foreach (var book in books)
         {
-            new BsonDocument("$match", new BsonDocument("$or", new BsonArray
+            var keys = new HashSet<string>();
+            if (book.CategoryIds.Count > 0)
             {
-                new BsonDocument("IsActive", true),
-                new BsonDocument("IsActive", new BsonDocument("$exists", false))
-            })),
-            new BsonDocument("$unwind", "$Genres"),
-            new BsonDocument("$match", new BsonDocument("Genres", new BsonDocument
+                foreach (var c in categories.Where(c => book.CategoryIds.Contains(c.Id)))
+                {
+                    if (!keys.Add(c.Id)) continue;
+                    var prior = rows.GetValueOrDefault(c.Id);
+                    rows[c.Id] = new(c.Name, (prior?.Count ?? 0) + 1) { Id = c.Id, Name = c.Name, Slug = c.Slug };
+                }
+            }
+            else foreach (var name in book.Genres.Count > 0 ? book.Genres : string.IsNullOrWhiteSpace(book.Genre) ? new List<string>() : new List<string> { book.Genre })
             {
-                { "$type", "string" },
-                { "$ne", string.Empty }
-            })),
-            new BsonDocument("$group", new BsonDocument
-            {
-                { "_id", "$Genres" },
-                { "count", new BsonDocument("$sum", 1) }
-            }),
-            new BsonDocument("$sort", new BsonDocument { { "count", -1 }, { "_id", 1 } })
-        };
-        var rows = await _books.Aggregate<BsonDocument>(pipeline).ToListAsync(token);
-        return rows.Select(row => new BookFacetResponse(row["_id"].AsString, row["count"].ToInt64())).ToArray();
+                var normalized = WebAppBookLibrary.Domain.Categories.CategoryRules.NormalizeName(name);
+                if (normalized.Length == 0) continue;
+                var c = categories.SingleOrDefault(c => c.NormalizedName == normalized || c.Aliases.Contains(normalized));
+                var key = c?.Id ?? "legacy:" + normalized;
+                if (!keys.Add(key)) continue;
+                var prior = rows.GetValueOrDefault(key);
+                rows[key] = new(c?.Name ?? name, (prior?.Count ?? 0) + 1) { Id = c?.Id, Name = c?.Name ?? name, Slug = c?.Slug };
+            }
+        }
+        return rows.Values.OrderByDescending(r => r.Count).ThenBy(r => r.Name, StringComparer.Ordinal).ToArray();
     }
 
     private async Task<PagedResult<BookCatalogEntry>> SearchByPopularityAsync(

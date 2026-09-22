@@ -1,4 +1,4 @@
-﻿using MongoDB.Driver;
+using MongoDB.Driver;
 using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Services
@@ -41,12 +41,19 @@ namespace WebAppBookLibrary.Services
 
         public IMongoCollection<User> Users => _database.GetCollection<User>("Users");
         public IMongoCollection<LogEntry> LogEntries => _database.GetCollection<LogEntry>("LogEntries");
+        public IMongoCollection<Category> Categories => _database.GetCollection<Category>("Categories");
         public IMongoCollection<Book> Books => _database.GetCollection<Book>("Books");
         public IMongoCollection<Loan> Loans => _database.GetCollection<Loan>("Loans");
         public IMongoCollection<Favorite> Favorites => _database.GetCollection<Favorite>("Favorites");
 
         public async Task CreateIndexesAsync()
         {
+            await Categories.Indexes.CreateManyAsync([
+                new CreateIndexModel<Category>(Builders<Category>.IndexKeys.Ascending(c => c.NormalizedName), new CreateIndexOptions { Name = "ux_categories_name", Unique = true }),
+                new CreateIndexModel<Category>(Builders<Category>.IndexKeys.Ascending(c => c.Slug), new CreateIndexOptions { Name = "ux_categories_slug", Unique = true }),
+                new CreateIndexModel<Category>(Builders<Category>.IndexKeys.Ascending(c => c.Aliases), new CreateIndexOptions<Category> { Name = "ux_categories_aliases", Unique = true, PartialFilterExpression = Builders<Category>.Filter.Exists("Aliases.0") })
+            ]);
+            await Books.Indexes.CreateOneAsync(new CreateIndexModel<Book>(Builders<Book>.IndexKeys.Ascending(b => b.CategoryIds), new CreateIndexOptions { Name = "ix_books_categories" }));
             var userBuilder = Builders<User>.IndexKeys;
             var userIndexes = new[]
             {
