@@ -23,6 +23,13 @@ public sealed class UserService
     public Task TouchLastLoginAsync(string userId, DateTime occurredAtUtc, CancellationToken cancellationToken) =>
         _userStore.TouchLastLoginAsync(userId, occurredAtUtc, cancellationToken);
 
+    public async Task<User?> GetUserByEmailAsync(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email) || email.Trim().Length > 254 || !EmailValidator.IsValid(email.Trim())) return null;
+        var user = await _userStore.FindByEmailAsync(email.Trim());
+        return user?.IsActive == true ? user : null;
+    }
+
     public async Task<UserCreationResult> CreateUserAsync(RegisterRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Username) ||

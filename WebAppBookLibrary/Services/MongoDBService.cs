@@ -48,6 +48,7 @@ namespace WebAppBookLibrary.Services
 
         public async Task CreateIndexesAsync()
         {
+            await AccountRecoveryService.CreateIndexesAsync(_database);
             await Categories.Indexes.CreateManyAsync([
                 new CreateIndexModel<Category>(Builders<Category>.IndexKeys.Ascending(c => c.NormalizedName), new CreateIndexOptions { Name = "ux_categories_name", Unique = true }),
                 new CreateIndexModel<Category>(Builders<Category>.IndexKeys.Ascending(c => c.Slug), new CreateIndexOptions { Name = "ux_categories_slug", Unique = true }),

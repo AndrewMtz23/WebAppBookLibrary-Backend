@@ -17,6 +17,10 @@ builder.Logging.SetMinimumLevel(LogLevel.Warning);
 builder.Configuration["Jwt:Key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
 builder.Configuration["Jwt:Issuer"] = "BookLibraryLocalQa";
 builder.Configuration["Jwt:Audience"] = "BookLibraryLocalQa";
+var mailbox = Path.Combine(Path.GetTempPath(), "booklibrary-mail-qa", Guid.NewGuid().ToString("N"));
+builder.Configuration["AccountRecovery:Enabled"] = "true";
+builder.Configuration["AccountRecovery:PublicBaseUrl"] = "http://localhost:4284";
+builder.Configuration["AccountRecovery:LocalMailDirectory"] = mailbox;
 void Configure(string name, params object[] values) => typeof(AppProgram).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, values);
 Configure("ConfigureCors", builder.Services, "http://localhost:4284");
 Configure("ConfigureJwt", builder.Services, builder.Configuration);
@@ -73,6 +77,16 @@ var app = builder.Build();
 Configure("ConfigurePipeline", app);
 // This route exists only in this isolated test host, never in the application.
 app.MapGet("/__qa", () => new { fixture = "booklibrary-phase5", databaseName, books = books.Select(b => new { b.Id, b.Title }) });
+// Fake inbox only exists in this loopback-only host, with synthetic accounts.
+app.MapGet("/__qa/mail", () => Directory.Exists(mailbox)
+    ? Directory.GetFiles(mailbox, "*.json").Select(path => JsonSerializer.Deserialize<AccountMailPayload>(File.ReadAllText(path))).ToArray()
+    : Array.Empty<AccountMailPayload>());
 Console.WriteLine("Local UI QA ready on 127.0.0.1:7184; session metadata is in qa-session.json beside the executable.");
 try { await app.RunAsync(); }
-finally { await client.DropDatabaseAsync(databaseName); }
+finally {
+    await client.DropDatabaseAsync(databaseName);
+    if (Directory.Exists(mailbox)) {
+        foreach (var file in Directory.GetFiles(mailbox)) File.Delete(file);
+        Directory.Delete(mailbox);
+    }
+}

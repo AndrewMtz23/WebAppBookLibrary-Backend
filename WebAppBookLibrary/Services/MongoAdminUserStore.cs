@@ -134,6 +134,15 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                 var update = Builders<User>.Update.Set(user => user.UpdatedAt, updatedAt);
                 if (command is not null)
                 {
+                    var emailConflict = MongoUserStore.EmailIdentityFilter(command.Email) & Builders<User>.Filter.Ne(user => user.Id, canonicalTargetId);
+                    if (await _users.Find(transaction, emailConflict).AnyAsync(transactionToken))
+                        return snapshot with { Outcome = AdminStoreMutationOutcome.IdentityConflict };
+                    if (target.Email != command.Email)
+                    {
+                        update = update.Set(user => user.EmailVerifiedAt, null).Inc(user => user.EmailVersion, 1);
+                        target.EmailVerifiedAt = null;
+                        target.EmailVersion++;
+                    }
                     update = update
                         .Set(user => user.Username, command.Username)
                         .Set(user => user.NormalizedUsername, command.Username.ToUpperInvariant())

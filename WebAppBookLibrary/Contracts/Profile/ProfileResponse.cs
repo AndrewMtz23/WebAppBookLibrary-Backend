@@ -9,4 +9,7 @@ public sealed record ProfileResponse(
     string Role,
     DateTime CreatedAt,
     DateTime? LastLoginAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt)
+{
+    public DateTime? EmailVerifiedAt { get; init; }
+}

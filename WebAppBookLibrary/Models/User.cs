@@ -14,7 +14,12 @@ public class User
     public string NormalizedUsername { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long CredentialVersion { get; set; }
     public string Email { get; set; } = string.Empty;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long EmailVersion { get; set; }
+    public DateTime? EmailVerifiedAt { get; set; }
     public string NormalizedEmail { get; set; } = string.Empty;
     public string? AvatarUrl { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

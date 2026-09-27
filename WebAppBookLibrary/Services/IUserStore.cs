@@ -5,6 +5,7 @@ namespace WebAppBookLibrary.Services;
 public interface IUserStore
 {
     Task<User?> FindByUsernameAsync(string username);
+    Task<User?> FindByEmailAsync(string email);
 
     Task<User?> FindByUsernameOrEmailAsync(string username, string email);
 
