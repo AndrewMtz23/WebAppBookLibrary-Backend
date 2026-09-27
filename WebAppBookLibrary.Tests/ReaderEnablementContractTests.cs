@@ -34,7 +34,7 @@ public sealed class ReaderEnablementContractTests
         Assert.Equal(["Count", "Id", "Name", "Slug", "Value"], PropertyNames(facet!));
         Assert.NotNull(profile);
         Assert.Equal(
-            ["AvatarUrl", "CreatedAt", "DisplayName", "Email", "Id", "LastLoginAt", "Role", "UpdatedAt", "Username"],
+            ["AvatarUrl", "CreatedAt", "DisplayName", "Email", "EmailVerifiedAt", "Id", "LastLoginAt", "Role", "UpdatedAt", "Username"],
             PropertyNames(profile!));
         Assert.DoesNotContain(PropertyNames(profile!), name => name.Contains("Password", StringComparison.Ordinal));
     }

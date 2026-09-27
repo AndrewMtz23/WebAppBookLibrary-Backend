@@ -34,5 +34,5 @@ public sealed class ProfileService(IUserStore users)
             user.Role,
             user.CreatedAt,
             user.LastLoginAt,
-            user.UpdatedAt);
+            user.UpdatedAt) { EmailVerifiedAt = user.EmailVerifiedAt };
 }

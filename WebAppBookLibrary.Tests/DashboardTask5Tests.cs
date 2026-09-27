@@ -142,7 +142,9 @@ public sealed class DashboardTask5Tests
                 Loan(ids[3], "digital", "cancelled", new DateTime(2026, 9, 11, 7, 0, 0, DateTimeKind.Utc), null),
                 Loan(ids[0], "physical", "returned", new DateTime(2026, 9, 8, 8, 0, 0, DateTimeKind.Utc), null, new DateTime(2026, 9, 8, 9, 0, 0, DateTimeKind.Utc)),
                 Loan(ids[3], "digital", "", new DateTime(2026, 8, 5, 8, 0, 0, DateTimeKind.Utc), null),
-                new Loan { Id = ObjectId.GenerateNewId().ToString(), BookId = ids[2], UserId = ObjectId.GenerateNewId().ToString(), ReservedAt = default, LoanDate = new DateTime(2026, 9, 10, 9, 0, 0, DateTimeKind.Utc), MediaType = "", Status = "", IsReturned = false },
+                // The legacy reservation date still exercises fallback; its due date must also
+                // stay future-due for the live list, which does not use the snapshot's clock.
+                new Loan { Id = ObjectId.GenerateNewId().ToString(), BookId = ids[2], UserId = ObjectId.GenerateNewId().ToString(), ReservedAt = default, LoanDate = new DateTime(2026, 9, 10, 9, 0, 0, DateTimeKind.Utc), DueAt = DateTime.UtcNow.AddYears(1), MediaType = "", Status = "", IsReturned = false },
                 new Loan { Id = ObjectId.GenerateNewId().ToString(), BookId = ids[6], UserId = ObjectId.GenerateNewId().ToString(), ReservedAt = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc), LoanDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc), MediaType = "  ", Status = "active", DueAt = null, IsReturned = false },
                 new Loan { Id = ObjectId.GenerateNewId().ToString(), BookId = ids[1], UserId = ObjectId.GenerateNewId().ToString(), ReservedAt = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc), LoanDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc), MediaType = "physical", Status = "cancelled", ReturnedAt = new DateTime(2026, 9, 10, 10, 0, 0, DateTimeKind.Utc) }
             ]);

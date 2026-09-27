@@ -74,17 +74,17 @@ public class AuthController : ControllerBase
     {
         try
         {
-            if (request is null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
-                return ApiProblemFactory.Result(400, "Username and password are required");
+            if (request is null || string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+                return ApiProblemFactory.Result(400, "Email and password are required");
 
-            var user = await _userService.GetUserByUserNameAsync(request.Username);
+            var user = await _userService.GetUserByEmailAsync(request.Email);
 
             if (user == null ||
                 !PasswordHasher.VerifyPassword(request.Password, user.PasswordHash) ||
                 !RoleNames.TryNormalize(user.Role, out var role))
             {
-                await _logService.AuthenticationObservedAsync("failed", request.Username, new Dictionary<string, string> { ["reasonCode"] = "invalid_credentials" });
-                return ApiProblemFactory.Result(401, "Invalid username or password");
+                await _logService.AuthenticationObservedAsync("failed", "anonymous", new Dictionary<string, string> { ["reasonCode"] = "invalid_credentials" });
+                return ApiProblemFactory.Result(401, "Correo o contraseña incorrectos.");
             }
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.Key));
@@ -94,7 +94,8 @@ public class AuthController : ControllerBase
             {
                 new Claim(ClaimTypes.Name, user.Username),
                 new Claim(ClaimTypes.NameIdentifier, user.Id),
-                new Claim(ClaimTypes.Role, role)
+                new Claim(ClaimTypes.Role, role),
+                new Claim("credential_version", user.CredentialVersion.ToString(System.Globalization.CultureInfo.InvariantCulture))
             };
 
             var token = new JwtSecurityToken(
@@ -106,7 +107,7 @@ public class AuthController : ControllerBase
 
             await _userService.TouchLastLoginAsync(user.Id, DateTime.UtcNow, HttpContext.RequestAborted);
 
-            await _logService.LogAsync("INFORMATION", $"Login exitoso para usuario: {request.Username}");
+            await _logService.LogAsync("INFORMATION", $"Login exitoso para usuario: {user.Username}");
             await _logService.AuthenticationObservedAsync("succeeded", user.Id, new Dictionary<string, string> { ["role"] = role });
 
             return Ok(new
@@ -124,7 +125,7 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            await _logService.LogAsync("ERROR", $"Error durante el login de usuario: {request?.Username}", ex);
+            await _logService.LogAsync("ERROR", "Error durante el login", ex);
             return ApiProblemFactory.Result(500, "Internal server error");
         }
     }

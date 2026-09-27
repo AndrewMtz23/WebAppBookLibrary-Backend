@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -99,8 +100,16 @@ public static class Program
         {
             if (!await CurrentAccountValidator.ValidateAsync(context.User, context.RequestServices.GetRequiredService<IUserStore>()))
             {
-                await ApiProblemFactory.WriteAsync(context, StatusCodes.Status401Unauthorized, "Session is no longer valid", context.RequestAborted);
-                return;
+                if (context.GetEndpoint()?.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAllowAnonymous>() is not null)
+                {
+                    // Public reads must not inherit privileges from revoked credentials.
+                    context.User = new ClaimsPrincipal(new ClaimsIdentity());
+                }
+                else
+                {
+                    await ApiProblemFactory.WriteAsync(context, StatusCodes.Status401Unauthorized, "Session is no longer valid", context.RequestAborted);
+                    return;
+                }
             }
             await next(context);
         });
@@ -215,6 +224,20 @@ public static class Program
         services.AddScoped<IUserStore, MongoUserStore>();
         services.AddScoped<ILoanStore, MongoLoanStore>();
         services.AddScoped<UserService>();
+        services.AddScoped<PasswordSecurityService>();
+        services.AddOptions<AccountRecoveryOptions>().BindConfiguration("AccountRecovery")
+            .Validate(o => !o.Enabled || (Uri.TryCreate(o.PublicBaseUrl, UriKind.Absolute, out var uri) &&
+                (uri.Scheme == "https" || (uri.Scheme == "http" && uri.IsLoopback)) &&
+                string.IsNullOrEmpty(uri.UserInfo + uri.Query + uri.Fragment) &&
+                o.ResetMinutes is > 0 and <= 60 && o.VerificationMinutes is > 0 and <= 1440 &&
+                Path.IsPathFullyQualified(o.LocalMailDirectory)), "Account recovery requires a trusted public URL and an absolute local mailbox path.")
+            .ValidateOnStart();
+        services.AddDataProtection().SetApplicationName("BookLibrary.AccountSecurity");
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<AccountRecoveryService>();
+        services.AddScoped<AccountMailDispatcher>();
+        services.AddSingleton<IAccountMailTransport, LocalAccountMailTransport>();
+        services.AddHostedService<AccountMailWorker>();
         services.AddScoped<IBookStore, MongoBookStore>();
         services.AddScoped<IFavoriteStore, MongoFavoriteStore>();
         services.AddScoped<IAdminUserStore, MongoAdminUserStore>();
