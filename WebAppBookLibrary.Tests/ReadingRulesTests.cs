@@ -60,6 +60,20 @@ public class ReadingRulesTests
     }
 
     [Fact]
+    public void Metadata_only_completion_does_not_invent_activity_and_finished_adoption_needs_explicit_page()
+    {
+        var request = new SaveReadingRequest("reading", "page", null, 20, null, false, false);
+        var entry = Apply(null, request, 100);
+        var adopted = ReadingRules.Apply(entry, request with { AdoptCurrentPageCount = true }, 20, Now.AddDays(1)).Entry!;
+        Assert.Equal("finished", adopted.Status);
+        Assert.Equal(Now, adopted.LastProgressAt);
+        var finished = Apply(null, request with { Status = "finished", CurrentPage = 100 }, 100);
+        Assert.Equal("reading_invalid", ReadingRules.Apply(finished, request with { Status = "finished", CurrentPage = 100, AdoptCurrentPageCount = true }, 200, Now).ErrorCode);
+        var corrected = Apply(finished, request with { Status = "finished", CurrentPage = 200, AdoptCurrentPageCount = true }, 200);
+        Assert.Equal(200, corrected.CurrentPage);
+    }
+
+    [Fact]
     public void Page_snapshot_is_explicit_and_metadata_alone_does_not_update_activity()
     {
         var request = new SaveReadingRequest("reading", "page", null, 20, null, false, false);

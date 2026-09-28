@@ -33,10 +33,12 @@ public static class ReadingRules
             if (request.Status == "reading" && percent == 100) return Invalid();
         }
         var status = request.Status;
+        if (current?.Status == "finished" && status == "finished" && request.AdoptCurrentPageCount && page != total) return Invalid();
         if (status == "want_to_read") { percent = 0; if (page is not null) page = 0; }
         else if (status == "finished") { percent = 100; if (page is not null) page = total; }
         else if (percent == 100) status = "finished";
-        var activityChanged = current is null || current.Status != status ||
+        // A derived 100% after changing only the snapshot is not new reading activity.
+        var activityChanged = current is null || current.Status != request.Status ||
             (current.ProgressMode == request.ProgressMode && request.ProgressMode == "page" ? current.CurrentPage != page : current.ProgressPercent != percent);
         var entry = (current ?? new ReadingEntry()) with {
             Status = status, ProgressMode = request.ProgressMode, ProgressPercent = percent,
