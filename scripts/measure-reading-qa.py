@@ -61,17 +61,19 @@ def main():
             timings.append((time.perf_counter() - start)*1000)
         return timings
 
+    conflicts_before = client.admin.command('serverStatus')['metrics']['operation']['writeConflicts']
     start = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
         samples = [sample for batch in pool.map(writer, users) for sample in batch]
     report = {'shared_book_writes': summary(samples), 'write_elapsed_s': round(time.perf_counter()-start, 2), 'concurrent_users': 24}
+    report['server_write_conflicts_during_load'] = client.admin.command('serverStatus')['metrics']['operation']['writeConflicts'] - conflicts_before
     # Large personal history; newest 90% of active readings refer to hidden books.
     owner = ObjectId(users[0]['user']['id'])
     now = datetime.now(timezone.utc)
     books, entries = [], []
     for index in range(3000):
         book_id = ObjectId()
-        books.append({**book, '_id': book_id, 'Title': f'Synthetic {tag} {index}', 'IsActive': index % 10 == 0})
+        books.append({**book, '_id': book_id, 'Title': f'Synthetic {tag} {index}', 'IsActive': index < 300})
         entries.append({'_id': ObjectId(), 'UserId': owner, 'BookId': book_id, 'Status': 'reading',
                         'ProgressMode': 'percent', 'ProgressPercent': 30, 'CurrentPage': None, 'PageCountSnapshot': None,
                         'StartedAt': now, 'FinishedAt': None, 'LastProgressAt': now + timedelta(seconds=index),
@@ -84,7 +86,7 @@ def main():
             start = time.perf_counter()
             value = api(path, users[0]['token'])
             if name == 'latest':
-                assert value['entry']['bookAvailable'] and value['entry']['title'].endswith('2990')
+                assert value['entry']['bookAvailable'] and value['entry']['title'].endswith('299')
             else:
                 assert len(value['items']) == 20 and value['totalItems'] == 3001
             if iteration >= 3:
