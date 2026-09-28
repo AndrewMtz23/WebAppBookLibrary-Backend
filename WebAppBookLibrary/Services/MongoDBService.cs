@@ -45,9 +45,11 @@ namespace WebAppBookLibrary.Services
         public IMongoCollection<Book> Books => _database.GetCollection<Book>("Books");
         public IMongoCollection<Loan> Loans => _database.GetCollection<Loan>("Loans");
         public IMongoCollection<Favorite> Favorites => _database.GetCollection<Favorite>("Favorites");
+        public IMongoCollection<ReadingEntry> ReadingEntries => _database.GetCollection<ReadingEntry>("ReadingEntries");
 
         public async Task CreateIndexesAsync()
         {
+            await MongoReadingStore.CreateIndexesAsync(ReadingEntries);
             await AccountRecoveryService.CreateIndexesAsync(_database);
             await Categories.Indexes.CreateManyAsync([
                 new CreateIndexModel<Category>(Builders<Category>.IndexKeys.Ascending(c => c.NormalizedName), new CreateIndexOptions { Name = "ux_categories_name", Unique = true }),
