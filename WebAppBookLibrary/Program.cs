@@ -225,6 +225,8 @@ public static class Program
         services.AddScoped<ILoanStore, MongoLoanStore>();
         services.AddScoped<UserService>();
         services.AddScoped<PasswordSecurityService>();
+        services.AddScoped<IReadingStore, MongoReadingStore>();
+        services.AddScoped<ReadingService>();
         services.AddOptions<AccountRecoveryOptions>().BindConfiguration("AccountRecovery")
             .Validate(o => !o.Enabled || (Uri.TryCreate(o.PublicBaseUrl, UriKind.Absolute, out var uri) &&
                 (uri.Scheme == "https" || (uri.Scheme == "http" && uri.IsLoopback)) &&
