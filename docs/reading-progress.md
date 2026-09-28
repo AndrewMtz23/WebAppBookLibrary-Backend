@@ -46,3 +46,25 @@ dotnet build WebAppBookLibrary.sln -c Release --no-restore
 ```
 
 309 pruebas, cero fallos/omisiones; build sin errores/advertencias. `ReadingRulesTests`, `ReadingPersistenceTests` y `ReadingHttpTests` cubren reglas, concurrencia, recreación, aislamiento, libros ocultos, auditoría y tres roles. Revisión independiente: tres hallazgos corregidos y reproducidos antes de la corrección.
+
+## Cierre para uso real (28/09/2026)
+
+La eliminación definitiva de una cuenta limpia sus `ReadingEntries` dentro de la misma transacción que elimina usuario y favoritos. La prueba con guardado concurrente verifica cero entradas huérfanas y conservación del historial de otra cuenta. Suite actual: 310/310 sin omisiones.
+
+`python scripts/measure-reading-qa.py` requiere pymongo y el host QA local. Rechaza bases sin el marcador aleatorio de QA; no admite URL remota. Genera datos sintéticos que se eliminan al limpiar la base del host. Restaura BSON e índices de Users/Books/ReadingEntries en otra base temporal y compara todos los documentos antes de eliminarla.
+
+Medición local Windows/.NET8/Mongo8.0.28: 24 usuarios, 120 guardados sobre el mismo libro, sin errores; p50 35 ms, p95 486 ms, máximo 1023 ms. Con 3000 entradas adicionales y 90 % de libros ocultos: p95 primera página 36 ms, página 150 67 ms, última lectura 37 ms. Explain usa `ix_reading_updated`; página profunda examina 3000 claves y 20 documentos. No se elimina la guarda compartida ni se promete capacidad de producción con esta muestra. El tiempo de las peticiones incluye esperas/reintentos internos; el script no mide su número por separado.
+
+La restauración comprobó 39 usuarios, 3017 libros, 3033 lecturas y los cinco índices de lectura (incluido `_id_`). Es una prueba del conjunto sintético y del procedimiento BSON; falta ensayar el servicio real de backups.
+
+### Puertas de puesta en operación
+
+| Puerta | Evidencia requerida | Responsable |
+|---|---|---|
+| Staging compatible | SHA API/cliente, índices creados y smoke de lectura/aislamiento | Responsable del despliegue |
+| Backup real | Identificador/hora de snapshot, restauración aislada y cotejo de ReadingEntries/Users/Books/índices | Operador de base de datos |
+| Rollback | Artefactos anterior/nuevo compatibles; conservar lecturas e inventario; conciliar escrituras posteriores al snapshot | Responsable del despliegue |
+| Monitoreo | Collector recibiendo `booklibrary.http.request.duration`, rutas de lectura, 5xx/409/latencia y alerta probada | Operador de aplicación |
+| Capacidad | Carga con volumen previsto, p95/errores y reintentos de transacción medidos en staging | Responsable técnico |
+
+Criterio provisional de laboratorio: cero escrituras perdidas y p95 menor de un segundo en este escenario. La prueba lo cumple; el volumen y los umbrales de producción deben acordarse con datos reales de uso. No están configurados ni probados staging, alertas o backups externos por esta entrega.

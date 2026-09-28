@@ -126,6 +126,8 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                     if (deleted.DeletedCount != 1) return snapshot with { Outcome = AdminStoreMutationOutcome.Conflict };
                     await _users.Database.GetCollection<Favorite>("Favorites").DeleteManyAsync(transaction,
                         favorite => favorite.UserId == canonicalTargetId, cancellationToken: transactionToken);
+                    await _users.Database.GetCollection<ReadingEntry>("ReadingEntries").DeleteManyAsync(transaction,
+                        entry => entry.UserId == canonicalTargetId, cancellationToken: transactionToken);
                     return snapshot;
                 }
 

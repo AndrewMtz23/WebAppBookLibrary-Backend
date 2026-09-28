@@ -87,6 +87,23 @@ public sealed class ReadingPersistenceTests
     });
 
     [LocalMongoFact]
+    public Task Account_removal_cleans_only_its_reading_history_even_with_a_pending_save() => StaffReviewRegressionTests.WithDatabase(async db => {
+        var f = await Seed(db);
+        var admin = new User { Id = ObjectId.GenerateNewId().ToString(), Username = "owner", Email = "owner@example.invalid", Role = "admin", IsActive = true };
+        await f.Db.Users.InsertOneAsync(admin);
+        var saved = (await f.Store.SaveAsync(f.User.Id, f.Book.Id, Request(), Now, default)).Entry!;
+        await f.Store.SaveAsync(admin.Id, f.Book.Id, Request(), Now, default);
+        var users = new MongoAdminUserStore(f.Db);
+        var writing = f.Store.SaveAsync(f.User.Id, f.Book.Id, Request(70, saved.Revision), Now.AddMinutes(1), default);
+        await users.SetStatusSafelyAsync(admin.Id, f.User.Id, false, Now, default);
+        await users.DeletePermanentlyAsync(admin.Id, f.User.Id, default);
+        Assert.Contains((await writing).Status, new[] { 200, 401 });
+        Assert.Null(await f.Db.Users.Find(u => u.Id == f.User.Id).FirstOrDefaultAsync());
+        Assert.Equal(0, await f.Db.ReadingEntries.CountDocumentsAsync(e => e.UserId == f.User.Id));
+        Assert.Equal(1, await f.Db.ReadingEntries.CountDocumentsAsync(e => e.UserId == admin.Id));
+    });
+
+    [LocalMongoFact]
     public Task Inactive_account_cannot_mutate_and_repeated_save_has_no_extra_audit() => StaffReviewRegressionTests.WithDatabase(async db => {
         var f = await Seed(db);
         var saved = (await f.Store.SaveAsync(f.User.Id, f.Book.Id, Request(), Now, default)).Entry!;
