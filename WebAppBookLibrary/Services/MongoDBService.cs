@@ -49,6 +49,7 @@ namespace WebAppBookLibrary.Services
 
         public async Task CreateIndexesAsync()
         {
+            await NotificationEvents.CreateIndexesAsync(_database);
             await MongoReadingStore.CreateIndexesAsync(ReadingEntries);
             await AccountRecoveryService.CreateIndexesAsync(_database);
             await Categories.Indexes.CreateManyAsync([
