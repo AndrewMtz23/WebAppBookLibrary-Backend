@@ -227,6 +227,11 @@ public static class Program
         services.AddScoped<PasswordSecurityService>();
         services.AddScoped<IReadingStore, MongoReadingStore>();
         services.AddScoped<ReadingService>();
+        services.AddScoped<NotificationService>();
+        services.AddOptions<WebAppBookLibrary.Configuration.NotificationOptions>().BindConfiguration("Notifications")
+            .Validate(o => o.SoonHours > 0 && o.EarlyHours > o.SoonHours && o.EarlyHours <= 720 && o.PollSeconds is >= 3 and <= 3600, "Invalid notification thresholds.").ValidateOnStart();
+        services.AddScoped<NotificationReminders>();
+        services.AddHostedService<NotificationWorker>();
         services.AddOptions<AccountRecoveryOptions>().BindConfiguration("AccountRecovery")
             .Validate(o => !o.Enabled || (Uri.TryCreate(o.PublicBaseUrl, UriKind.Absolute, out var uri) &&
                 (uri.Scheme == "https" || (uri.Scheme == "http" && uri.IsLoopback)) &&

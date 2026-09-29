@@ -128,6 +128,11 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                         favorite => favorite.UserId == canonicalTargetId, cancellationToken: transactionToken);
                     await _users.Database.GetCollection<ReadingEntry>("ReadingEntries").DeleteManyAsync(transaction,
                         entry => entry.UserId == canonicalTargetId, cancellationToken: transactionToken);
+                    var noticeIds = await _users.Database.GetCollection<Notification>("Notifications").Find(transaction, n => n.UserId == canonicalTargetId).Project(n => n.Id).ToListAsync(transactionToken);
+                    await _users.Database.GetCollection<AccountMailJob>("AccountMailOutbox").DeleteManyAsync(transaction,
+                        Builders<AccountMailJob>.Filter.In(j => j.NotificationId, noticeIds), cancellationToken: transactionToken);
+                    await _users.Database.GetCollection<Notification>("Notifications").DeleteManyAsync(transaction, n => n.UserId == canonicalTargetId, cancellationToken: transactionToken);
+                    await _users.Database.GetCollection<NotificationPreferences>("NotificationPreferences").DeleteOneAsync(transaction, p => p.Id == canonicalTargetId, cancellationToken: transactionToken);
                     return snapshot;
                 }
 

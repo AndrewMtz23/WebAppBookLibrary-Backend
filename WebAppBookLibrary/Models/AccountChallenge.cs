@@ -17,6 +17,7 @@ public sealed class AccountChallenge
 
 public sealed class AccountMailJob
 {
+    public string? NotificationId { get; set; }
     [BsonId] public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Stage { get; set; } = "request";
     public string ProtectedPayload { get; set; } = "";
@@ -28,4 +29,4 @@ public sealed class AccountMailJob
     public int Attempts { get; set; }
 }
 
-public sealed record AccountMailPayload(string Purpose, string Email, string UserId = "", string Token = "", string Link = "");
+public sealed record AccountMailPayload(string Purpose, string Email, string UserId = "", string Token = "", string Link = "", string Title = "", string Body = "");
