@@ -29,6 +29,7 @@ public class Book
     public string? DigitalResourceUrl { get; set; }
     public int? TotalCopies { get; set; }
     public int? AvailableCopies { get; set; }
+    public int? RetainedCopies { get; set; } = 0;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

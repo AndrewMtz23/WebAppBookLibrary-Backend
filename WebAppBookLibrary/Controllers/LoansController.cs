@@ -46,6 +46,8 @@ public class LoansController : ControllerBase
             {
                 LoanOperationErrorCodes.BookUnavailable =>
                     LoanProblem(409, "Book is not available", result.ErrorCode),
+                LoanOperationErrorCodes.PhysicalPickupRequired =>
+                    LoanProblem(409, "Physical books require pickup reservation under the active circulation policy", result.ErrorCode),
                 LoanOperationErrorCodes.DuplicateActive =>
                     LoanProblem(409, "An active reservation already exists", result.ErrorCode),
                 LoanOperationErrorCodes.BookNotFound =>

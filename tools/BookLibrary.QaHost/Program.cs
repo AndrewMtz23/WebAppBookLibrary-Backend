@@ -77,6 +77,12 @@ var app = builder.Build();
 Configure("ConfigurePipeline", app);
 // This route exists only in this isolated test host, never in the application.
 app.MapGet("/__qa", () => new { fixture = "booklibrary-phase5", databaseName, books = books.Select(b => new { b.Id, b.Title }) });
+app.MapPost("/__qa/circulation/expire/{id}", async (string id, ICirculationStore circulation) => {
+    if (!ObjectId.TryParse(id, out _)) return Results.BadRequest();
+    await mongo.PickupReservations.UpdateOneAsync(p => p.Id == id && p.Status == "ready", Builders<PickupReservation>.Update.Set(p => p.PickupExpiresAt, DateTime.UtcNow.AddSeconds(-1)));
+    await circulation.ProcessExpiredPickupReservationsAsync(DateTime.UtcNow, default);
+    return Results.NoContent();
+});
 // Fake inbox only exists in this loopback-only host, with synthetic accounts.
 app.MapGet("/__qa/mail", () => Directory.Exists(mailbox)
     ? Directory.GetFiles(mailbox, "*.json").Select(path => JsonSerializer.Deserialize<AccountMailPayload>(File.ReadAllText(path))).ToArray()

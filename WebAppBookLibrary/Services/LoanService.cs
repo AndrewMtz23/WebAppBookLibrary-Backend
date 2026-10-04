@@ -15,21 +15,23 @@ public class LoanService
     private const string Warning = "WARNING";
 
     private readonly ILoanStore _loanStore;
+    private readonly ICirculationStore? _circulation;
     private readonly IMongoCollection<Loan> _loans = null!;
     private readonly IMongoCollection<Book> _books = null!;
     private readonly IMongoCollection<User> _users = null!;
     private readonly Logservice _logService = null!;
 
-    public LoanService(ILoanStore loanStore)
+    public LoanService(ILoanStore loanStore, ICirculationStore? circulation = null)
     {
         _loanStore = loanStore;
+        _circulation = circulation;
     }
 
     public LoanService(
         ILoanStore loanStore,
         MongoDBService dbService,
-        Logservice logService)
-        : this(loanStore)
+        Logservice logService, ICirculationStore? circulation = null)
+        : this(loanStore, circulation)
     {
         _loans = dbService.Loans;
         _books = dbService.Books;
@@ -47,6 +49,7 @@ public class LoanService
             return Failure(LoanOperationErrorCodes.DuplicateActive);
 
         var physical = book.MediaType == MediaTypes.Physical;
+        if (physical && _circulation is not null) return await _circulation.ReserveLegacyAsync(user.Id, bookId, createdBy, nowUtc, token);
         var legacyPhysical = physical && (book.TotalCopies is null || book.AvailableCopies is null);
         var loanId = ObjectId.GenerateNewId().ToString();
         if (physical)
@@ -156,6 +159,11 @@ public class LoanService
         var loan = await _loanStore.FindLoanAsync(loanId, token);
         if (loan is null) return Failure(LoanOperationErrorCodes.LoanNotFound);
         if (!CanReturn(loan, user, callerRole)) return Failure(LoanOperationErrorCodes.Forbidden);
+        if (loan.PolicyVersion == "circulation-v1")
+        {
+            if (callerRole is not ("librarian" or "admin")) return Failure(LoanOperationErrorCodes.Forbidden);
+            if (nextStatus != LoanStatuses.Returned) return Failure(LoanOperationErrorCodes.InvalidTransition);
+        }
         var effectiveStatus = LoanResponse.From(loan, nowUtc).Status;
         if (effectiveStatus == nextStatus) return new(true, string.Empty, loan, true);
         if (!LoanRules.CanTransition(effectiveStatus, nextStatus))
@@ -163,7 +171,9 @@ public class LoanService
 
         var isPhysical = string.IsNullOrWhiteSpace(loan.MediaType) || loan.MediaType == MediaTypes.Physical;
         var transitioned = isPhysical
-            ? await _loanStore.CompletePhysicalAsync(loanId, loan.BookId, nextStatus, nowUtc, token)
+            ? (_circulation is not null && (loan.PolicyVersion == "circulation-v1" || await _circulation.GetModeAsync(token) != "legacy")
+                ? await _circulation.ReturnPhysicalLoanAsync(loanId, user.Id, token, nextStatus)
+                : await _loanStore.CompletePhysicalAsync(loanId, loan.BookId, nextStatus, nowUtc, token))
             : await _loanStore.TransitionAsync(loanId, [LoanStatuses.Active, LoanStatuses.Overdue], nextStatus, nowUtc, token);
         if (!transitioned)
         {
@@ -370,6 +380,8 @@ public class LoanService
             if (loan is null)
                 return (false, "Loan not found.");
 
+            if (loan.PolicyVersion == "circulation-v1" || LoanResponse.From(loan, DateTime.UtcNow).Status is "active" or "overdue")
+                return (false, "Close the loan before deleting its record.");
             if (!loan.IsReturned)
             {
                 var released = await _loanStore.RestoreBookAvailabilityAsync(

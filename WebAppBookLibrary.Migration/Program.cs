@@ -3,6 +3,8 @@ using MongoDB.Driver;
 using WebAppBookLibrary.Configuration;
 using WebAppBookLibrary.Migrations;
 
+if (args.Contains("--circulation")) return await CirculationMigrationCommand.RunAsync(args);
+
 if (args.Contains("--categories", StringComparer.OrdinalIgnoreCase))
     return await CategoryMigrationCommand.RunAsync(args);
 
