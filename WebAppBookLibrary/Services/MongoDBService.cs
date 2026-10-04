@@ -46,11 +46,17 @@ namespace WebAppBookLibrary.Services
         public IMongoCollection<Loan> Loans => _database.GetCollection<Loan>("Loans");
         public IMongoCollection<Favorite> Favorites => _database.GetCollection<Favorite>("Favorites");
         public IMongoCollection<ReadingEntry> ReadingEntries => _database.GetCollection<ReadingEntry>("ReadingEntries");
+        public IMongoCollection<WaitlistEntry> WaitlistEntries => _database.GetCollection<WaitlistEntry>("WaitlistEntries");
+        public IMongoCollection<PickupReservation> PickupReservations => _database.GetCollection<PickupReservation>("PickupReservations");
+        public IMongoCollection<RenewalRequest> RenewalRequests => _database.GetCollection<RenewalRequest>("RenewalRequests");
+        public IMongoCollection<CirculationHistoryEntry> CirculationHistory => _database.GetCollection<CirculationHistoryEntry>("CirculationHistory");
 
         public async Task CreateIndexesAsync()
         {
+            await NotificationEvents.CreateIndexesAsync(_database);
             await MongoReadingStore.CreateIndexesAsync(ReadingEntries);
             await AccountRecoveryService.CreateIndexesAsync(_database);
+            await MongoCirculationStore.CreateIndexesAsync(_database);
             await Categories.Indexes.CreateManyAsync([
                 new CreateIndexModel<Category>(Builders<Category>.IndexKeys.Ascending(c => c.NormalizedName), new CreateIndexOptions { Name = "ux_categories_name", Unique = true }),
                 new CreateIndexModel<Category>(Builders<Category>.IndexKeys.Ascending(c => c.Slug), new CreateIndexOptions { Name = "ux_categories_slug", Unique = true }),

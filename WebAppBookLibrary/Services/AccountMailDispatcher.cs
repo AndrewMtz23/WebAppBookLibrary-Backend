@@ -15,7 +15,7 @@ public interface IAccountMailTransport
 }
 
 public sealed class AccountMailDispatcher(MongoDBService mongo, IDataProtectionProvider protection,
-    IOptions<AccountRecoveryOptions> options, TimeProvider clock, IAccountMailTransport transport)
+    IOptions<AccountRecoveryOptions> options, TimeProvider clock, IAccountMailTransport transport, IOptions<NotificationOptions>? notificationOptions = null)
 {
     private readonly IDataProtector protector = protection.CreateProtector(AccountRecoveryService.ProtectorPurpose);
 
@@ -24,15 +24,29 @@ public sealed class AccountMailDispatcher(MongoDBService mongo, IDataProtectionP
         if (!options.Value.Enabled) return false;
         var now = clock.GetUtcNow().UtcDateTime;
         var jobs = mongo._database.GetCollection<AccountMailJob>("AccountMailOutbox");
-        await jobs.UpdateManyAsync(j => (j.Stage == "request" || j.Stage == "delivery") && j.Attempts >= 5 && j.LeaseUntil <= now,
+        var notificationsEnabled = notificationOptions?.Value.Enabled ?? true;
+        await jobs.UpdateManyAsync(j => (notificationsEnabled || j.NotificationId == null) && (j.Stage == "request" || j.Stage == "delivery") && j.Attempts >= 5 && j.LeaseUntil <= now,
             Builders<AccountMailJob>.Update.Set(j => j.Stage, "dead").Set(j => j.ProtectedPayload, ""), cancellationToken: ct);
         var lease = Guid.NewGuid().ToString("N");
-        var job = await jobs.FindOneAndUpdateAsync(j => (j.Stage == "request" || j.Stage == "delivery") && j.Attempts < 5 && j.AvailableAt <= now && j.LeaseUntil <= now && j.ExpiresAt > now,
+        var job = await jobs.FindOneAndUpdateAsync(j => (notificationsEnabled || j.NotificationId == null) && (j.Stage == "request" || j.Stage == "delivery") && j.Attempts < 5 && j.AvailableAt <= now && j.LeaseUntil <= now && j.ExpiresAt > now,
             Builders<AccountMailJob>.Update.Set(j => j.LeaseId, lease).Set(j => j.LeaseUntil, now.AddMinutes(1)).Inc(j => j.Attempts, 1),
             new FindOneAndUpdateOptions<AccountMailJob> { ReturnDocument = ReturnDocument.After, Sort = Builders<AccountMailJob>.Sort.Ascending(j => j.CreatedAt) }, ct);
         if (job is null) return false;
         try
         {
+            if (job.NotificationId is not null)
+            {
+                var message = await NotificationMail.PrepareAsync(mongo, job.NotificationId, clock.GetUtcNow().UtcDateTime, options.Value.PublicBaseUrl, notificationOptions?.Value ?? new(), ct);
+                if (message is not null)
+                {
+                    using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    deadline.CancelAfter(TimeSpan.FromSeconds(30));
+                    await transport.DeliverAsync(job.Id, message, deadline.Token);
+                    NotificationMetrics.Delivery("accepted");
+                }
+                else NotificationMetrics.Delivery("suppressed");
+                await FinishAsync(); return true;
+            }
             var payload = JsonSerializer.Deserialize<AccountMailPayload>(protector.Unprotect(job.ProtectedPayload))!;
             if (job.Stage == "request")
             {
@@ -73,6 +87,7 @@ public sealed class AccountMailDispatcher(MongoDBService mongo, IDataProtectionP
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception)
         {
+            if (job.NotificationId is not null) NotificationMetrics.Delivery(job.Attempts >= 5 ? "dead" : "retry");
             // Never log encrypted messages, addresses, tokens or provider exception bodies.
             var update = Builders<AccountMailJob>.Update.Set(j => j.LeaseUntil, now).Set(j => j.AvailableAt, now.AddSeconds(Math.Pow(2, job.Attempts) * 10));
             if (job.Attempts >= 5) update = update.Set(j => j.Stage, "dead").Set(j => j.ProtectedPayload, "");

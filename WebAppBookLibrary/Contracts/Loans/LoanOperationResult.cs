@@ -20,4 +20,5 @@ public static class LoanOperationErrorCodes
     public const string BookNotFound = "book_not_found";
     public const string DuplicateActive = "duplicate_active_reservation";
     public const string InvalidTransition = "invalid_transition";
+    public const string PhysicalPickupRequired = "physical_pickup_required";
 }

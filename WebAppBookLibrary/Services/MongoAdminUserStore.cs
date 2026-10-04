@@ -119,7 +119,8 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                 {
                     if (target.IsActive) return snapshot with { Outcome = AdminStoreMutationOutcome.MustBeInactive };
                     var loans = _users.Database.GetCollection<Loan>("Loans");
-                    if (await loans.Find(transaction, loan => loan.UserId == canonicalTargetId).AnyAsync(transactionToken))
+                    if (await _users.Database.GetCollection<CirculationHistoryEntry>("CirculationHistory").Find(transaction, h => h.UserId == canonicalTargetId).AnyAsync(transactionToken) ||
+                        await loans.Find(transaction, loan => loan.UserId == canonicalTargetId).AnyAsync(transactionToken))
                         return snapshot with { Outcome = AdminStoreMutationOutcome.HasLoans };
                     // The delete conflicts with in-flight reference writes on the same user document.
                     var deleted = await _users.DeleteOneAsync(transaction, user => user.Id == canonicalTargetId, cancellationToken: transactionToken);
@@ -128,6 +129,11 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                         favorite => favorite.UserId == canonicalTargetId, cancellationToken: transactionToken);
                     await _users.Database.GetCollection<ReadingEntry>("ReadingEntries").DeleteManyAsync(transaction,
                         entry => entry.UserId == canonicalTargetId, cancellationToken: transactionToken);
+                    var noticeIds = await _users.Database.GetCollection<Notification>("Notifications").Find(transaction, n => n.UserId == canonicalTargetId).Project(n => n.Id).ToListAsync(transactionToken);
+                    await _users.Database.GetCollection<AccountMailJob>("AccountMailOutbox").DeleteManyAsync(transaction,
+                        Builders<AccountMailJob>.Filter.In(j => j.NotificationId, noticeIds), cancellationToken: transactionToken);
+                    await _users.Database.GetCollection<Notification>("Notifications").DeleteManyAsync(transaction, n => n.UserId == canonicalTargetId, cancellationToken: transactionToken);
+                    await _users.Database.GetCollection<NotificationPreferences>("NotificationPreferences").DeleteOneAsync(transaction, p => p.Id == canonicalTargetId, cancellationToken: transactionToken);
                     return snapshot;
                 }
 

@@ -309,7 +309,7 @@ public class LoanServiceTests
     }
 
     [Fact]
-    public async Task DeleteLoan_releases_active_correlation_then_allows_new_reservation()
+    public async Task DeleteLoan_rejects_active_loan_without_releasing_its_copy()
     {
         string? activeLoanId = "l1";
         var bookIsAvailable = false;
@@ -343,10 +343,9 @@ public class LoanServiceTests
         var deleted = await service.DeleteLoanAsync("l1");
         var replacementLoan = await service.CreateLoanAsync("b1", "ana");
 
-        Assert.True(deleted.Success);
-        Assert.True(replacementLoan.Success);
-        Assert.NotNull(replacementLoan.Loan);
-        Assert.Equal(replacementLoan.Loan.Id, activeLoanId);
+        Assert.False(deleted.Success);
+        Assert.False(replacementLoan.Success);
+        Assert.Equal("l1", activeLoanId);
         Assert.False(bookIsAvailable);
     }
 

@@ -14,10 +14,12 @@ public sealed class MongoLoanStore : ILoanStore
     private readonly IMongoCollection<Book> _books;
     private readonly IMongoCollection<Loan> _loans;
     private readonly IMongoCollection<User> _users;
+    private readonly bool _notificationsEnabled = true;
 
-    public MongoLoanStore(MongoDBService mongoDBService)
+    public MongoLoanStore(MongoDBService mongoDBService, Microsoft.Extensions.Options.IOptions<WebAppBookLibrary.Configuration.NotificationOptions>? options = null)
         : this(mongoDBService.Books, mongoDBService.Loans, mongoDBService.Users)
     {
+        _notificationsEnabled = options?.Value.Enabled ?? true;
     }
 
     public MongoLoanStore(
@@ -100,6 +102,7 @@ public sealed class MongoLoanStore : ILoanStore
             if (changed.MatchedCount != 1) throw new BookReferenceUnavailableException();
             await UserReferenceGuard.TouchAsync(_users, transaction, loan.UserId, ct);
             await _loans.InsertOneAsync(transaction, loan, cancellationToken: ct);
+            if (_notificationsEnabled) await NotificationEvents.AppendAsync(_loans.Database, transaction, loan, "reserved", loan.ReservedAt == default ? loan.LoanDate : loan.ReservedAt, ct);
             return true;
         }, cancellationToken: token);
     }
@@ -117,52 +120,68 @@ public sealed class MongoLoanStore : ILoanStore
         update = nextStatus == LoanStatuses.Returned
             ? update.Set(loan => loan.ReturnedAt, changedAtUtc).Set(loan => loan.ReturnDate, changedAtUtc).Set(loan => loan.IsReturned, true)
             : update.Set(loan => loan.CancelledAt, changedAtUtc);
-        return (await _loans.UpdateOneAsync(filter, update, cancellationToken: token)).ModifiedCount == 1;
+        using var session = await _loans.Database.Client.StartSessionAsync(cancellationToken: token);
+        return await session.WithTransactionAsync(async (tx, ct) => {
+            var loan = await _loans.Find(tx, filter).FirstOrDefaultAsync(ct);
+            if (loan is null) return false;
+            await _users.UpdateOneAsync(tx, u => u.Id == loan.UserId, Builders<User>.Update.Inc(u => u.ReferenceVersion, 1), cancellationToken: ct);
+            if ((await _loans.UpdateOneAsync(tx, filter, update, cancellationToken: ct)).ModifiedCount != 1) return false;
+            if (_notificationsEnabled) await NotificationEvents.AppendAsync(_loans.Database, tx, loan, nextStatus, changedAtUtc, ct);
+            return true;
+        }, cancellationToken: token);
     }
 
     public async Task<bool> CompletePhysicalAsync(string loanId, string bookId, string nextStatus, DateTime changedAtUtc, CancellationToken token)
     {
         using var session = await _loans.Database.Client.StartSessionAsync(cancellationToken: token);
-        session.StartTransaction();
         try
         {
-            var builder = Builders<Loan>.Filter;
-            var activeState = builder.In(loan => loan.Status, [LoanStatuses.Active, LoanStatuses.Overdue]) |
-                              ((builder.Exists(loan => loan.Status, false) | builder.Eq(loan => loan.Status, null) | builder.Regex(loan => loan.Status, new BsonRegularExpression("^\\s*$"))) & builder.Eq(loan => loan.IsReturned, false));
-            var loanFilter = builder.Eq(loan => loan.Id, loanId) & activeState;
-            var loanUpdate = Builders<Loan>.Update.Set(loan => loan.Status, nextStatus).Set(loan => loan.ActiveReservationKey, null);
-            loanUpdate = nextStatus == LoanStatuses.Returned
-                ? loanUpdate.Set(loan => loan.ReturnedAt, changedAtUtc).Set(loan => loan.ReturnDate, changedAtUtc).Set(loan => loan.IsReturned, true)
-                : loanUpdate.Set(loan => loan.CancelledAt, changedAtUtc);
-            var loanResult = await _loans.UpdateOneAsync(session, loanFilter, loanUpdate, cancellationToken: token);
-            if (loanResult.ModifiedCount != 1) { await session.AbortTransactionAsync(token); return false; }
+            return await session.WithTransactionAsync(async (transaction, ct) =>
+            {
+                var builder = Builders<Loan>.Filter;
+                var activeState = builder.In(loan => loan.Status, [LoanStatuses.Active, LoanStatuses.Overdue]) |
+                                  ((builder.Exists(loan => loan.Status, false) | builder.Eq(loan => loan.Status, null) | builder.Regex(loan => loan.Status, new BsonRegularExpression("^\\s*$"))) & builder.Eq(loan => loan.IsReturned, false));
+                var loanFilter = builder.Eq(loan => loan.Id, loanId) & activeState;
+                var loanUpdate = Builders<Loan>.Update.Set(loan => loan.Status, nextStatus).Set(loan => loan.ActiveReservationKey, null);
+                loanUpdate = nextStatus == LoanStatuses.Returned
+                    ? loanUpdate.Set(loan => loan.ReturnedAt, changedAtUtc).Set(loan => loan.ReturnDate, changedAtUtc).Set(loan => loan.IsReturned, true)
+                    : loanUpdate.Set(loan => loan.CancelledAt, changedAtUtc);
+                var loanResult = await _loans.UpdateOneAsync(transaction, loanFilter, loanUpdate, cancellationToken: ct);
+                if (loanResult.ModifiedCount != 1) throw new PhysicalCompletionUnavailableException();
 
-            var currentBook = await _books.Find(session, book => book.Id == bookId).FirstOrDefaultAsync(token);
-            if (currentBook is null) { await session.AbortTransactionAsync(token); return false; }
-            var bookFilter = Builders<Book>.Filter.Eq(book => book.Id, bookId);
-            UpdateDefinition<Book> bookUpdate;
-            if (currentBook.TotalCopies is null || currentBook.AvailableCopies is null)
-            {
-                bookFilter &= Builders<Book>.Filter.Or(Builders<Book>.Filter.Eq(book => book.ActiveLoanId, loanId), Builders<Book>.Filter.Exists(book => book.ActiveLoanId, false));
-                bookUpdate = Builders<Book>.Update.Set(book => book.TotalCopies, 1).Set(book => book.AvailableCopies, 1).Set(book => book.IsAvailable, true).Set(book => book.ActiveLoanId, null).Set(book => book.UpdatedAt, changedAtUtc);
-            }
-            else
-            {
-                var capacityFilter = new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$AvailableCopies", "$TotalCopies" }));
-                bookFilter &= capacityFilter;
-                bookUpdate = Builders<Book>.Update.Inc(book => book.AvailableCopies, 1).Set(book => book.IsAvailable, true).Set(book => book.UpdatedAt, changedAtUtc);
-            }
-            var bookResult = await _books.UpdateOneAsync(session, bookFilter, bookUpdate, cancellationToken: token);
-            if (bookResult.ModifiedCount != 1) { await session.AbortTransactionAsync(token); return false; }
-            await session.CommitTransactionAsync(token);
-            return true;
+                var owner = await _loans.Find(transaction, l => l.Id == loanId).SingleAsync(ct);
+                await _users.UpdateOneAsync(transaction, u => u.Id == owner.UserId, Builders<User>.Update.Inc(u => u.ReferenceVersion, 1), cancellationToken: ct);
+                var currentBook = await _books.Find(transaction, book => book.Id == bookId).FirstOrDefaultAsync(ct);
+                if (currentBook is null) throw new PhysicalCompletionUnavailableException();
+                var bookFilter = Builders<Book>.Filter.Eq(book => book.Id, bookId);
+                UpdateDefinition<Book> bookUpdate;
+                if (currentBook.TotalCopies is null || currentBook.AvailableCopies is null)
+                {
+                    bookFilter &= Builders<Book>.Filter.Or(Builders<Book>.Filter.Eq(book => book.ActiveLoanId, loanId), Builders<Book>.Filter.Exists(book => book.ActiveLoanId, false));
+                    bookUpdate = Builders<Book>.Update.Set(book => book.TotalCopies, 1).Set(book => book.AvailableCopies, 1).Set(book => book.IsAvailable, true).Set(book => book.ActiveLoanId, null).Set(book => book.UpdatedAt, changedAtUtc);
+                }
+                else
+                {
+                    var capacityFilter = new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$AvailableCopies", "$TotalCopies" }));
+                    bookFilter &= capacityFilter;
+                    bookUpdate = Builders<Book>.Update.Inc(book => book.AvailableCopies, 1).Set(book => book.IsAvailable, true).Set(book => book.UpdatedAt, changedAtUtc);
+                }
+                var bookResult = await _books.UpdateOneAsync(transaction, bookFilter, bookUpdate, cancellationToken: ct);
+                if (bookResult.ModifiedCount != 1) throw new PhysicalCompletionUnavailableException();
+                var completedLoan = await _loans.Find(transaction, l => l.Id == loanId).SingleAsync(ct);
+                if (_notificationsEnabled) await NotificationEvents.AppendAsync(_loans.Database, transaction, completedLoan, nextStatus, changedAtUtc, ct);
+                return true;
+            }, cancellationToken: token);
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch
         {
             if (session.IsInTransaction) await session.AbortTransactionAsync(CancellationToken.None);
             return false;
         }
     }
+
+    private sealed class PhysicalCompletionUnavailableException : Exception { }
 
     public async Task<PagedResult<Loan>> SearchAsync(NormalizedLoanQuery query, CancellationToken token)
     {
@@ -369,7 +388,7 @@ public sealed class MongoLoanStore : ILoanStore
         if (!ObjectId.TryParse(loanId, out _))
             return false;
 
-        var result = await _loans.DeleteOneAsync(loan => loan.Id == loanId);
+        var result = await _loans.DeleteOneAsync(loan => loan.Id == loanId && loan.PolicyVersion != "circulation-v1");
         return result.DeletedCount == 1;
     }
 
