@@ -119,7 +119,8 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                 {
                     if (target.IsActive) return snapshot with { Outcome = AdminStoreMutationOutcome.MustBeInactive };
                     var loans = _users.Database.GetCollection<Loan>("Loans");
-                    if (await loans.Find(transaction, loan => loan.UserId == canonicalTargetId).AnyAsync(transactionToken))
+                    if (await _users.Database.GetCollection<CirculationHistoryEntry>("CirculationHistory").Find(transaction, h => h.UserId == canonicalTargetId).AnyAsync(transactionToken) ||
+                        await loans.Find(transaction, loan => loan.UserId == canonicalTargetId).AnyAsync(transactionToken))
                         return snapshot with { Outcome = AdminStoreMutationOutcome.HasLoans };
                     // The delete conflicts with in-flight reference writes on the same user document.
                     var deleted = await _users.DeleteOneAsync(transaction, user => user.Id == canonicalTargetId, cancellationToken: transactionToken);

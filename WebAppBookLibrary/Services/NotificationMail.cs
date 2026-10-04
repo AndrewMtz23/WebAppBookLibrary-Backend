@@ -14,6 +14,13 @@ public static class NotificationMail
         var prefs = await mongo._database.GetCollection<NotificationPreferences>("NotificationPreferences").Find(p => p.Id == notice.UserId).FirstOrDefaultAsync(ct);
         var account = await mongo.Users.Find(u => u.Id == notice.UserId && u.IsActive && u.EmailVerifiedAt != null).FirstOrDefaultAsync(ct);
         if (account is null || prefs?.Email != true) return null;
+        if (notice.Type == "pickup_ready")
+        {
+            var parts = notice.EventKey.Split(':');
+            if (parts.Length < 2 || !MongoDB.Bson.ObjectId.TryParse(parts[1], out _)) return null;
+            var pickup = await mongo.PickupReservations.Find(p => p.Id == parts[1] && p.Status == "ready" && p.PickupExpiresAt > now).FirstOrDefaultAsync(ct);
+            if (pickup == null || !await mongo.Books.Find(b => b.Id == pickup.BookId && b.IsActive).AnyAsync(ct)) return null;
+        }
         if (notice.Type.StartsWith("due_"))
         {
             if (!prefs.Reminders) return null;

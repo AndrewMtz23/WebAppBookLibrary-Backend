@@ -388,7 +388,7 @@ public sealed class MongoLoanStore : ILoanStore
         if (!ObjectId.TryParse(loanId, out _))
             return false;
 
-        var result = await _loans.DeleteOneAsync(loan => loan.Id == loanId);
+        var result = await _loans.DeleteOneAsync(loan => loan.Id == loanId && loan.PolicyVersion != "circulation-v1");
         return result.DeletedCount == 1;
     }
 

@@ -10,6 +10,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using WebAppBookLibrary.Configuration;
 using WebAppBookLibrary.Data;
+using WebAppBookLibrary.Domain.Circulation;
 using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
@@ -70,6 +71,9 @@ public static class Program
             options.AddPolicy(
                 PolicyNames.ManageUsers,
                 policy => policy.RequireRole(RoleNames.Admin));
+            options.AddPolicy(
+                PolicyNames.ManageCirculation,
+                policy => policy.RequireRole(RoleNames.Librarian, RoleNames.Admin));
         });
     }
 
@@ -232,6 +236,12 @@ public static class Program
             .Validate(o => o.SoonHours > 0 && o.EarlyHours > o.SoonHours && o.EarlyHours <= 720 && o.PollSeconds is >= 3 and <= 3600, "Invalid notification thresholds.").ValidateOnStart();
         services.AddScoped<NotificationReminders>();
         services.AddHostedService<NotificationWorker>();
+        services.AddOptions<CirculationOptions>().BindConfiguration(CirculationOptions.SectionName)
+            .Validate(o => CirculationModes.IsValid(o.Mode) && o.PickupHours > 0 && o.LoanDays > 0 && o.RenewalDays > 0 && o.MaxRenewals >= 0 && o.PollSeconds >= 1, "Invalid circulation configuration.")
+            .ValidateOnStart();
+        services.AddScoped<ICirculationStore, MongoCirculationStore>();
+        services.AddScoped<CirculationReminders>();
+        services.AddHostedService<CirculationWorker>();
         services.AddOptions<AccountRecoveryOptions>().BindConfiguration("AccountRecovery")
             .Validate(o => !o.Enabled || (Uri.TryCreate(o.PublicBaseUrl, UriKind.Absolute, out var uri) &&
                 (uri.Scheme == "https" || (uri.Scheme == "http" && uri.IsLoopback)) &&

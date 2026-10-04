@@ -1,4 +1,4 @@
-﻿using MongoDB.Bson;
+using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using WebAppBookLibrary.Domain.Books;
 using WebAppBookLibrary.Domain.Loans;
@@ -24,6 +24,14 @@ namespace WebAppBookLibrary.Models
         public string? Notes { get; set; }
         public string? ActiveReservationKey { get; set; }
         public long NotificationVersion { get; set; }
+
+        public DateTime? CheckedOutAt { get; set; }
+        public string? PolicyVersion { get; set; }
+        public int RenewalCount { get; set; }
+        [BsonRepresentation(BsonType.ObjectId)]
+        [BsonIgnoreIfNull]
+        public string? PickupReservationId { get; set; }
+        public CirculationPolicySnapshot? PolicySnapshot { get; set; }
 
         // Legacy fields remain readable until the explicit schema migration is applied.
         public DateTime LoanDate { get; set; } = DateTime.UtcNow;
