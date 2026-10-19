@@ -14,6 +14,9 @@ public static class NotificationMail
         var prefs = await mongo._database.GetCollection<NotificationPreferences>("NotificationPreferences").Find(p => p.Id == notice.UserId).FirstOrDefaultAsync(ct);
         var account = await mongo.Users.Find(u => u.Id == notice.UserId && u.IsActive && u.EmailVerifiedAt != null).FirstOrDefaultAsync(ct);
         if (account is null || prefs?.Email != true) return null;
+        if (notice.TargetType == "support_ticket" && !await mongo._database.GetCollection<SupportTicket>("SupportTickets")
+            .Find(t => t.Id == notice.TargetId && t.RequesterId == account.Id).AnyAsync(ct)) return null;
+        if (notice.TargetType == "review" && !await mongo._database.GetCollection<Review>("Reviews").Find(r => r.Id == notice.TargetId && r.UserId == account.Id).AnyAsync(ct)) return null;
         if (notice.Type == "pickup_ready")
         {
             var parts = notice.EventKey.Split(':');

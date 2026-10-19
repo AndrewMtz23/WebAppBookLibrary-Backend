@@ -14,6 +14,8 @@ using WebAppBookLibrary.Domain.Circulation;
 using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Security;
 using WebAppBookLibrary.Services;
+using WebAppBookLibrary.Services.Support;
+using WebAppBookLibrary.Services.Reviews;
 
 namespace WebAppBookLibrary;
 
@@ -67,6 +69,8 @@ public static class Program
             options.AddPolicy(
                 PolicyNames.ViewSecurity,
                 policy => policy.RequireRole(RoleNames.Admin));
+            options.AddPolicy(PolicyNames.ManageReviews, policy => policy.RequireRole(RoleNames.Admin));
+            options.AddPolicy(PolicyNames.ManageSupport, policy => policy.RequireRole(RoleNames.Librarian, RoleNames.Admin));
             options.AddPolicy(PolicyNames.ManageCategories, policy => policy.RequireRole(RoleNames.Admin));
             options.AddPolicy(
                 PolicyNames.ManageUsers,
@@ -232,6 +236,17 @@ public static class Program
         services.AddScoped<IReadingStore, MongoReadingStore>();
         services.AddScoped<ReadingService>();
         services.AddScoped<NotificationService>();
+        services.AddOptions<SupportOptions>().BindConfiguration("Support").ValidateDataAnnotations().ValidateOnStart();
+        services.AddOptions<ReviewOptions>().BindConfiguration("Reviews").ValidateDataAnnotations().ValidateOnStart();
+        services.AddScoped<MongoReviewStore>();
+        services.AddScoped<ReviewModerationStore>();
+        services.AddScoped<ReviewQueries>();
+        services.AddScoped<ReviewRetention>();
+        services.AddHostedService<ReviewRetentionWorker>();
+        services.AddScoped<MongoSupportStore>();
+        services.AddScoped<SupportQueries>();
+        services.AddScoped<SupportRetention>();
+        services.AddHostedService<SupportRetentionWorker>();
         services.AddOptions<WebAppBookLibrary.Configuration.NotificationOptions>().BindConfiguration("Notifications")
             .Validate(o => o.SoonHours > 0 && o.EarlyHours > o.SoonHours && o.EarlyHours <= 720 && o.PollSeconds is >= 3 and <= 3600, "Invalid notification thresholds.").ValidateOnStart();
         services.AddScoped<NotificationReminders>();

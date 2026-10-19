@@ -10,5 +10,7 @@ public static class PolicyNames
     public const string ViewSecurity = nameof(ViewSecurity);
     public const string ManageCategories = nameof(ManageCategories);
     public const string ManageUsers = nameof(ManageUsers);
+    public const string ManageReviews = "ManageReviews";
+    public const string ManageSupport = "ManageSupport";
     public const string ManageCirculation = nameof(ManageCirculation);
 }

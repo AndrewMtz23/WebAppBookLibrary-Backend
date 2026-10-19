@@ -125,6 +125,10 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                     // The delete conflicts with in-flight reference writes on the same user document.
                     var deleted = await _users.DeleteOneAsync(transaction, user => user.Id == canonicalTargetId, cancellationToken: transactionToken);
                     if (deleted.DeletedCount != 1) return snapshot with { Outcome = AdminStoreMutationOutcome.Conflict };
+                    await Reviews.ReviewRetention.DeleteOwnedAsync(_users.Database, transaction, canonicalTargetId, transactionToken);
+                    await Reviews.ReviewRetention.AnonymizeActorAsync(_users.Database, transaction, canonicalTargetId, transactionToken);
+                    await Support.SupportRetention.DeleteOwnedAsync(_users.Database, transaction, canonicalTargetId, transactionToken);
+                    await Support.SupportRetention.AnonymizeStaffAsync(_users.Database, transaction, canonicalTargetId, transactionToken);
                     await _users.Database.GetCollection<Favorite>("Favorites").DeleteManyAsync(transaction,
                         favorite => favorite.UserId == canonicalTargetId, cancellationToken: transactionToken);
                     await _users.Database.GetCollection<ReadingEntry>("ReadingEntries").DeleteManyAsync(transaction,
