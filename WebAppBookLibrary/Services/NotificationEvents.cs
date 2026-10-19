@@ -26,7 +26,7 @@ public static class NotificationEvents
         string? loanId,
         DateTime? dueAt,
         DateTime now,
-        CancellationToken ct)
+        CancellationToken ct, string targetType = "book")
     {
         var notices = db.GetCollection<Notification>("Notifications");
         if (await notices.Find(tx, n => n.UserId == userId && n.EventKey == eventKey).AnyAsync(ct)) return;
@@ -36,7 +36,7 @@ public static class NotificationEvents
             new FindOneAndUpdateOptions<NotificationPreferences> { IsUpsert = true, ReturnDocument = ReturnDocument.After }, ct);
         if (type.StartsWith("due_") && !prefs.Reminders) return;
         var notice = new Notification { UserId = userId, Sequence = prefs.Sequence, EventKey = eventKey, Type = type, LoanId = loanId ?? "",
-            TargetId = targetId ?? "", DueAt = dueAt, CreatedAt = now,
+            TargetType = targetType, TargetId = targetId ?? "", DueAt = dueAt, CreatedAt = now,
             Title = title, Body = body };
         await notices.InsertOneAsync(tx, notice, cancellationToken: ct);
         if (prefs.Email)
