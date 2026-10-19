@@ -177,6 +177,7 @@ public sealed class MongoBookStore : IBookStore
                 await _loans.Find(transaction, l => l.BookId == id).AnyAsync(ct) ||
                 await _favorites.Find(transaction, f => f.BookId == id).AnyAsync(ct))
                 return new BookMutationResult(false, "book_has_references");
+            await Reviews.ReviewRetention.DeleteBookAsync(_books.Database, transaction, id, ct);
             await _books.DeleteOneAsync(transaction, b => b.Id == id, cancellationToken: ct);
             return new BookMutationResult(true, string.Empty);
         }, cancellationToken: token);
