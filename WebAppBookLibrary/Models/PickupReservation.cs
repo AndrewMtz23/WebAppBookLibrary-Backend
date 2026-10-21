@@ -16,6 +16,8 @@ public class PickupReservation
     public string UserId { get; set; } = string.Empty;
 
     public string BookId { get; set; } = string.Empty;
+    [BsonIgnoreIfNull]
+    public string? CopyId { get; set; }
 
     public string Status { get; set; } = PickupReservationStatuses.Ready;
 

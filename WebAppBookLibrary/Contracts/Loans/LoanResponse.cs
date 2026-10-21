@@ -5,14 +5,14 @@ using System.ComponentModel.DataAnnotations;
 
 namespace WebAppBookLibrary.Contracts.Loans;
 
-public sealed record LoanResponse(string Id, string BookId, string UserId, string MediaType, string Status, DateTime ReservedAt, DateTime? DueAt, DateTime? ReturnedAt, DateTime? CancelledAt, string? Notes, string? BookTitle = null, string? Username = null, string? DisplayName = null, string? BookCoverUrl = null, string? UserAvatarUrl = null, string? PolicyVersion = null, int RenewalCount = 0, DateTime? CheckedOutAt = null)
+public sealed record LoanResponse(string Id, string BookId, string UserId, string MediaType, string Status, DateTime ReservedAt, DateTime? DueAt, DateTime? ReturnedAt, DateTime? CancelledAt, string? Notes, string? BookTitle = null, string? Username = null, string? DisplayName = null, string? BookCoverUrl = null, string? UserAvatarUrl = null, string? PolicyVersion = null, int RenewalCount = 0, DateTime? CheckedOutAt = null, string? CopyId = null, string? CopyInventoryCode = null)
 {
     public static LoanResponse From(Loan loan, DateTime nowUtc) => new(
         loan.Id, loan.BookId, loan.UserId,
         string.IsNullOrWhiteSpace(loan.MediaType) ? MediaTypes.Physical : loan.MediaType,
         EffectiveStatus(loan, nowUtc),
         loan.ReservedAt == default ? loan.LoanDate : loan.ReservedAt,
-        EffectiveDueAt(loan), loan.ReturnedAt ?? loan.ReturnDate, loan.CancelledAt, loan.Notes, PolicyVersion: loan.PolicyVersion, RenewalCount: loan.RenewalCount, CheckedOutAt: loan.CheckedOutAt);
+        EffectiveDueAt(loan), loan.ReturnedAt ?? loan.ReturnDate, loan.CancelledAt, loan.Notes, PolicyVersion: loan.PolicyVersion, RenewalCount: loan.RenewalCount, CheckedOutAt: loan.CheckedOutAt, CopyId: loan.CopyId, CopyInventoryCode: loan.CopyInventoryCode);
 
     private static DateTime? EffectiveDueAt(Loan loan) => loan.DueAt ?? (string.IsNullOrWhiteSpace(loan.MediaType) ? loan.LoanDate.AddDays(14) : null);
     private static string EffectiveStatus(Loan loan, DateTime nowUtc)
@@ -46,7 +46,7 @@ public sealed class LoanQuery : IValidatableObject
     public NormalizedLoanQuery Normalize()
     {
         var status = Status?.Trim().ToLowerInvariant();
-        if (status is not (LoanStatuses.Active or LoanStatuses.Overdue or LoanStatuses.Returned or LoanStatuses.Cancelled or "outstanding")) status = null;
+        if (status is not (LoanStatuses.Active or LoanStatuses.Overdue or LoanStatuses.Returned or LoanStatuses.Cancelled or LoanStatuses.Lost or "outstanding")) status = null;
         var media = MediaType?.Trim().ToLowerInvariant();
         if (media is not (MediaTypes.Physical or MediaTypes.Digital)) media = null;
         var text = Query?.Trim(); if (string.IsNullOrEmpty(text)) text = null; else text = text[..Math.Min(text.Length, MaxQueryLength)];

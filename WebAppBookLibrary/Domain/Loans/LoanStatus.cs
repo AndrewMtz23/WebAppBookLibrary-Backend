@@ -6,7 +6,8 @@ public static class LoanStatuses
     public const string Returned = "returned";
     public const string Overdue = "overdue";
     public const string Cancelled = "cancelled";
+    public const string Lost = "lost";
 
     public static bool IsCanonical(string? value) =>
-        value is Active or Returned or Overdue or Cancelled;
+        value is Active or Returned or Overdue or Cancelled or Lost;
 }

@@ -51,11 +51,12 @@ public sealed record PickupReservationResponse(
     DateTime? CancelledAt,
     string? CancelledReason,
     string? LoanId,
-    long Version
+    long Version,
+    string? CopyId = null
 );
 
 public sealed record CollectPickupRequest(
-    long ExpectedVersion
+    long ExpectedVersion, WebAppBookLibrary.Contracts.Copies.CopySelection? Copy = null
 );
 
 public sealed record CancelPickupRequest(

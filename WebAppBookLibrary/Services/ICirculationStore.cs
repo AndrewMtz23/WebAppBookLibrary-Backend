@@ -55,7 +55,7 @@ public interface ICirculationStore
     Task<ReservePickupResult> ReserveForPickupAsync(string userId, string bookId, string? idempotencyKey, CancellationToken ct);
     Task<PickupReservationListPage> GetMyPickupReservationsAsync(string userId, int page, int pageSize, CancellationToken ct);
     Task<PickupReservationListPage> GetStaffPickupReservationsAsync(string? status, string? search, int page, int pageSize, CancellationToken ct);
-    Task<CollectPickupResult> CollectPickupReservationAsync(string pickupId, string staffUserId, long expectedVersion, CancellationToken ct);
+    Task<CollectPickupResult> CollectPickupReservationAsync(string pickupId, string staffUserId, long expectedVersion, CancellationToken ct, WebAppBookLibrary.Contracts.Copies.CopySelection? copySelection = null);
     Task<bool> CancelPickupReservationAsync(string pickupId, string actorId, bool isStaff, string? reason, long expectedVersion, CancellationToken ct);
 
     Task<RenewalRequestResult> RequestRenewalAsync(string loanId, string userId, string? reason, CancellationToken ct, string? idempotencyKey = null);
@@ -63,7 +63,7 @@ public interface ICirculationStore
     Task<RenewalRequestListPage> GetStaffRenewalRequestsAsync(string? status, string? search, int page, int pageSize, CancellationToken ct);
     Task<RenewalDecisionResult> DecideRenewalAsync(string renewalRequestId, string staffUserId, bool approve, string? decisionReason, long expectedVersion, CancellationToken ct);
 
-    Task<bool> ReturnPhysicalLoanAsync(string loanId, string staffUserId, CancellationToken ct, string nextStatus = "returned");
+    Task<bool> ReturnPhysicalLoanAsync(string loanId, string staffUserId, CancellationToken ct, string nextStatus = "returned", WebAppBookLibrary.Contracts.Copies.ReturnPhysicalRequest? request = null);
     Task PromoteAvailableAsync(CancellationToken ct);
     Task<int> ProcessExpiredPickupReservationsAsync(DateTime now, CancellationToken ct);
 

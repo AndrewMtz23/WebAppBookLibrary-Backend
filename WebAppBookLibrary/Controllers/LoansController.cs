@@ -92,14 +92,14 @@ public class LoansController : ControllerBase
     }
 
     [HttpPut("{id}/return")]
-    public async Task<IActionResult> ReturnLoan(string id, CancellationToken cancellationToken)
+    public async Task<IActionResult> ReturnLoan(string id, CancellationToken cancellationToken, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] WebAppBookLibrary.Contracts.Copies.ReturnPhysicalRequest? request = null)
     {
         if (!ObjectId.TryParse(id, out _))
             return LoanProblem(400, "Invalid loan identifier", "invalid_identifier");
 
         var username = User.Identity?.Name ?? string.Empty;
         var callerRole = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
-        var result = await _loanService.ReturnReservationAsync(id, username, callerRole, DateTime.UtcNow, cancellationToken);
+        var result = await _loanService.ReturnReservationAsync(id, username, callerRole, DateTime.UtcNow, cancellationToken, request);
 
         if (!result.Success)
         {
