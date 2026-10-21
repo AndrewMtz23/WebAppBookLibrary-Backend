@@ -100,8 +100,8 @@ public class LoanService
         }
     }
 
-    public Task<LoanOperationResult> ReturnReservationAsync(string loanId, string username, string callerRole, DateTime nowUtc, CancellationToken token) =>
-        CompleteReservationAsync(loanId, username, callerRole, LoanStatuses.Returned, nowUtc, token);
+    public Task<LoanOperationResult> ReturnReservationAsync(string loanId, string username, string callerRole, DateTime nowUtc, CancellationToken token, WebAppBookLibrary.Contracts.Copies.ReturnPhysicalRequest? request = null) =>
+        CompleteReservationAsync(loanId, username, callerRole, LoanStatuses.Returned, nowUtc, token, request);
 
     public Task<LoanOperationResult> CancelReservationAsync(string loanId, string username, string callerRole, DateTime nowUtc, CancellationToken token) =>
         CompleteReservationAsync(loanId, username, callerRole, LoanStatuses.Cancelled, nowUtc, token);
@@ -151,7 +151,7 @@ public class LoanService
         return new(page.Items.Select(item => LoanResponse.From(item, DateTime.UtcNow)).ToArray(), page.Page, page.PageSize, page.TotalItems);
     }
 
-    private async Task<LoanOperationResult> CompleteReservationAsync(string loanId, string username, string callerRole, string nextStatus, DateTime nowUtc, CancellationToken token)
+    private async Task<LoanOperationResult> CompleteReservationAsync(string loanId, string username, string callerRole, string nextStatus, DateTime nowUtc, CancellationToken token, WebAppBookLibrary.Contracts.Copies.ReturnPhysicalRequest? request = null)
     {
         if (!IsCanonicalRole(callerRole)) return Failure(LoanOperationErrorCodes.Forbidden);
         var user = await _loanStore.FindActiveUserAsync(username);
@@ -163,6 +163,13 @@ public class LoanService
         {
             if (callerRole is not ("librarian" or "admin")) return Failure(LoanOperationErrorCodes.Forbidden);
             if (nextStatus != LoanStatuses.Returned) return Failure(LoanOperationErrorCodes.InvalidTransition);
+        }
+        if (loan.CopyId is not null)
+        {
+            if (callerRole is not ("librarian" or "admin") || _circulation is null) return Failure(LoanOperationErrorCodes.Forbidden);
+            if (nextStatus != LoanStatuses.Returned || !await _circulation.ReturnPhysicalLoanAsync(loanId, user.Id, token, nextStatus, request))
+                return Failure(LoanOperationErrorCodes.InvalidTransition);
+            return new(true, string.Empty, await _loanStore.FindLoanAsync(loanId, token), loan.Status == "returned");
         }
         var effectiveStatus = LoanResponse.From(loan, nowUtc).Status;
         if (effectiveStatus == nextStatus) return new(true, string.Empty, loan, true);

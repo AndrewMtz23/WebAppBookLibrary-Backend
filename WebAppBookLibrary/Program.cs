@@ -71,6 +71,7 @@ public static class Program
                 policy => policy.RequireRole(RoleNames.Admin));
             options.AddPolicy(PolicyNames.ManageReviews, policy => policy.RequireRole(RoleNames.Admin));
             options.AddPolicy(PolicyNames.ManageSupport, policy => policy.RequireRole(RoleNames.Librarian, RoleNames.Admin));
+            options.AddPolicy(PolicyNames.ManageCopies, policy => policy.RequireRole(RoleNames.Librarian, RoleNames.Admin));
             options.AddPolicy(PolicyNames.ManageCategories, policy => policy.RequireRole(RoleNames.Admin));
             options.AddPolicy(
                 PolicyNames.ManageUsers,
@@ -239,6 +240,9 @@ public static class Program
         services.AddOptions<SupportOptions>().BindConfiguration("Support").ValidateDataAnnotations().ValidateOnStart();
         services.AddOptions<ReviewOptions>().BindConfiguration("Reviews").ValidateDataAnnotations().ValidateOnStart();
         services.AddScoped<MongoReviewStore>();
+        services.AddScoped<WebAppBookLibrary.Services.Copies.CopyStore>();
+        services.AddScoped<WebAppBookLibrary.Services.Copies.CopyQueries>();
+        services.AddScoped<WebAppBookLibrary.Services.Copies.CopyTransitions>();
         services.AddScoped<ReviewModerationStore>();
         services.AddScoped<ReviewQueries>();
         services.AddScoped<ReviewRetention>();

@@ -109,7 +109,7 @@ public sealed class CirculationController(ICirculationStore store, MongoDBServic
     {
         if (!await Active(ct)) return Error("invalid_user", 401);
         if (!Id(id) || request.ExpectedVersion < 1) return Error("invalid_request", 400);
-        var result = await store.CollectPickupReservationAsync(id, Actor, request.ExpectedVersion, ct);
+        var result = await store.CollectPickupReservationAsync(id, Actor, request.ExpectedVersion, ct, request.Copy);
         return result.Success ? Ok(new { loanId = result.Loan!.Id, result.Idempotent }) : Error(result.ErrorCode!);
     }
     [HttpPut("api/pickup-reservations/{id}/cancel")]

@@ -30,6 +30,8 @@ public class Book
     public int? TotalCopies { get; set; }
     public int? AvailableCopies { get; set; }
     public int? RetainedCopies { get; set; } = 0;
+    public string InventoryMode { get; set; } = "aggregate";
+    [JsonIgnore] public long InventoryVersion { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

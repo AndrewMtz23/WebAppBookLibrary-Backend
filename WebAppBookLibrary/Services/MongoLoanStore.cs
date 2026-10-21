@@ -97,7 +97,7 @@ public sealed class MongoLoanStore : ILoanStore
             var media = loan.MediaType == MediaTypes.Digital ? b.Eq(x => x.MediaType, MediaTypes.Digital)
                 : b.Eq(x => x.MediaType, MediaTypes.Physical) | b.Exists(x => x.MediaType, false);
             var active = b.Eq(x => x.IsActive, true) | b.Exists(x => x.IsActive, false);
-            var changed = await _books.UpdateOneAsync(transaction, b.Eq(x => x.Id, loan.BookId) & active & media,
+            var changed = await _books.UpdateOneAsync(transaction, b.Eq(x => x.Id, loan.BookId) & b.Ne(x => x.InventoryMode, "unit") & active & media,
                 Builders<Book>.Update.Inc(x => x.ReferenceVersion, 1), cancellationToken: ct);
             if (changed.MatchedCount != 1) throw new BookReferenceUnavailableException();
             await UserReferenceGuard.TouchAsync(_users, transaction, loan.UserId, ct);
@@ -115,7 +115,7 @@ public sealed class MongoLoanStore : ILoanStore
         var builder = Builders<Loan>.Filter;
         var activeState = builder.In(loan => loan.Status, allowedStatuses) |
                           ((builder.Exists(loan => loan.Status, false) | builder.Eq(loan => loan.Status, null) | builder.Regex(loan => loan.Status, new BsonRegularExpression("^\\s*$"))) & builder.Eq(loan => loan.IsReturned, false));
-        var filter = builder.Eq(loan => loan.Id, loanId) & activeState;
+        var filter = builder.Eq(loan => loan.Id, loanId) & builder.Eq(loan => loan.CopyId, null) & activeState;
         var update = Builders<Loan>.Update.Set(loan => loan.Status, nextStatus).Set(loan => loan.ActiveReservationKey, null);
         update = nextStatus == LoanStatuses.Returned
             ? update.Set(loan => loan.ReturnedAt, changedAtUtc).Set(loan => loan.ReturnDate, changedAtUtc).Set(loan => loan.IsReturned, true)
@@ -141,7 +141,7 @@ public sealed class MongoLoanStore : ILoanStore
                 var builder = Builders<Loan>.Filter;
                 var activeState = builder.In(loan => loan.Status, [LoanStatuses.Active, LoanStatuses.Overdue]) |
                                   ((builder.Exists(loan => loan.Status, false) | builder.Eq(loan => loan.Status, null) | builder.Regex(loan => loan.Status, new BsonRegularExpression("^\\s*$"))) & builder.Eq(loan => loan.IsReturned, false));
-                var loanFilter = builder.Eq(loan => loan.Id, loanId) & activeState;
+                var loanFilter = builder.Eq(loan => loan.Id, loanId) & builder.Eq(loan => loan.CopyId, null) & activeState;
                 var loanUpdate = Builders<Loan>.Update.Set(loan => loan.Status, nextStatus).Set(loan => loan.ActiveReservationKey, null);
                 loanUpdate = nextStatus == LoanStatuses.Returned
                     ? loanUpdate.Set(loan => loan.ReturnedAt, changedAtUtc).Set(loan => loan.ReturnDate, changedAtUtc).Set(loan => loan.IsReturned, true)
@@ -152,7 +152,7 @@ public sealed class MongoLoanStore : ILoanStore
                 var owner = await _loans.Find(transaction, l => l.Id == loanId).SingleAsync(ct);
                 await _users.UpdateOneAsync(transaction, u => u.Id == owner.UserId, Builders<User>.Update.Inc(u => u.ReferenceVersion, 1), cancellationToken: ct);
                 var currentBook = await _books.Find(transaction, book => book.Id == bookId).FirstOrDefaultAsync(ct);
-                if (currentBook is null) throw new PhysicalCompletionUnavailableException();
+                if (currentBook is null || currentBook.InventoryMode == "unit") throw new PhysicalCompletionUnavailableException();
                 var bookFilter = Builders<Book>.Filter.Eq(book => book.Id, bookId);
                 UpdateDefinition<Book> bookUpdate;
                 if (currentBook.TotalCopies is null || currentBook.AvailableCopies is null)
@@ -284,7 +284,7 @@ public sealed class MongoLoanStore : ILoanStore
             return null;
 
         var filter = Builders<Book>.Filter.Where(book =>
-            book.Id == bookId && book.IsAvailable && book.ActiveLoanId == null);
+            book.Id == bookId && book.InventoryMode != "unit" && book.IsAvailable && book.ActiveLoanId == null);
         var update = Builders<Book>.Update
             .Set(book => book.IsAvailable, false)
             .Set(book => book.ActiveLoanId, loanId);
@@ -305,7 +305,7 @@ public sealed class MongoLoanStore : ILoanStore
             return false;
 
         var filter = Builders<Book>.Filter.Where(book =>
-            book.Id == bookId &&
+            book.Id == bookId && book.InventoryMode != "unit" &&
             (book.ActiveLoanId == loanId ||
              (book.ActiveLoanId == null &&
               (allowLegacyUncorrelated || book.IsAvailable))));
@@ -374,7 +374,7 @@ public sealed class MongoLoanStore : ILoanStore
             return false;
 
         var filter = Builders<Loan>.Filter.Where(loan =>
-            loan.Id == loanId && loan.IsReturned == false);
+            loan.Id == loanId && loan.CopyId == null && loan.IsReturned == false);
         var update = Builders<Loan>.Update
             .Set(loan => loan.IsReturned, true)
             .Set(loan => loan.ReturnDate, returnedAtUtc);
@@ -388,7 +388,7 @@ public sealed class MongoLoanStore : ILoanStore
         if (!ObjectId.TryParse(loanId, out _))
             return false;
 
-        var result = await _loans.DeleteOneAsync(loan => loan.Id == loanId && loan.PolicyVersion != "circulation-v1");
+        var result = await _loans.DeleteOneAsync(loan => loan.Id == loanId && loan.CopyId == null && loan.PolicyVersion != "circulation-v1");
         return result.DeletedCount == 1;
     }
 

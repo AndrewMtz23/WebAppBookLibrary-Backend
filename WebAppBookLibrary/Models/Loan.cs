@@ -12,6 +12,14 @@ namespace WebAppBookLibrary.Models
         public string Id { get; set; } = string.Empty;
 
         public string BookId { get; set; } = string.Empty;
+        [BsonIgnoreIfNull]
+        public string? CopyId { get; set; }
+        [BsonIgnoreIfNull]
+        public string? CopyInventoryCode { get; set; }
+        [BsonIgnoreIfNull, System.Text.Json.Serialization.JsonIgnore]
+        public string? CopyReturnFingerprint { get; set; }
+        public DateTime? LostAt { get; set; }
+        public string? LostReason { get; set; }
         public string UserId { get; set; } = string.Empty;
 
         public string MediaType { get; set; } = string.Empty;

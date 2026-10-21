@@ -22,12 +22,16 @@ public static class CirculationMaintenance
             var loans = await mongo.Loans.Find(tx, FilterDefinition<Loan>.Empty).ToListAsync(token);
             var pickups = await mongo.PickupReservations.Find(tx, p => p.Status == "ready").ToListAsync(token);
             var now = DateTime.UtcNow;
-            var rows = books.Select(b => {
+            var rows = new List<CirculationInventory>();
+            foreach (var b in books) {
                 int loaned = loans.Count(l => l.BookId == b.Id && LoanResponse.From(l, now).Status is "active" or "overdue");
                 int retained = pickups.Count(p => p.BookId == b.Id);
                 int total = b.TotalCopies ?? -1, available = b.AvailableCopies ?? -1;
-                return new CirculationInventory(b.Id, total, available, retained, loaned, total >= 0 && available >= 0 && retained == (b.RetainedCopies ?? 0) && available + retained + loaned == total);
-            }).ToArray();
+                var consistent = b.InventoryMode == "unit"
+                    ? await new Copies.CopyAllocation(mongo,TimeProvider.System).ConsistentAsync(tx,b,token)
+                    : total >= 0 && available >= 0 && retained == (b.RetainedCopies ?? 0) && available + retained + loaned == total;
+                rows.Add(new CirculationInventory(b.Id, total, available, retained, loaned, consistent));
+            }
             var legacy = loans.Count(l => string.IsNullOrWhiteSpace(l.PolicyVersion));
             if (!apply) return new CirculationReconciliation(rows, legacy, false);
             if (rows.Any(r => !r.Consistent)) throw new InvalidOperationException("Inventory reconciliation required; no changes applied.");

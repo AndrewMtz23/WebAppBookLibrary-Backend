@@ -51,6 +51,16 @@ var books = new[] {
     new Book { Id = ObjectId.GenerateNewId().ToString(), Title = "Archivo inactivo", Authors = ["Ana Ejemplo"], Description = "Título inactivo sin referencias que permite comprobar el borrado definitivo local.", Genres = ["Ensayo"], MediaType = "physical", TotalCopies = 1, AvailableCopies = 1, IsActive = false }
 };
 await mongo.Books.InsertManyAsync(books);
+Book? copyBook = null;
+if (builder.Configuration["Circulation:Mode"] == "active") {
+    copyBook = new Book { Id = ObjectId.GenerateNewId().ToString(), Title = "Inventario de ejemplares QA", Authors = ["Autor de prueba"], Description = "Inventario aislado para inspecciones y circulaci?n por unidad.", Genres = ["Ensayo"], MediaType = "physical", TotalCopies = 3, AvailableCopies = 3, RetainedCopies = 0 };
+    await mongo.Books.InsertOneAsync(copyBook);
+    var migration = new WebAppBookLibrary.Migrations.CopyInventoryMigration(mongo, TimeProvider.System);
+    var preview = await migration.PreviewAsync(copyBook.Id, default);
+    var result = await migration.ApplyAsync(copyBook.Id, preview.Fingerprint, identities.Single(u => u.Role == "admin").Id, default);
+    if (!result.Success) throw new InvalidOperationException("QA copy fixture migration failed: " + result.ErrorCode);
+}
+
 // An overdue record is a fixed QA scenario, independent of mutations by other journeys.
 var overdueBook = new Book { Id = ObjectId.GenerateNewId().ToString(), Title = "Reserva vencida de prueba", Authors = ["Autor de prueba"], Description = "Ejemplar reservado para conciliar el indicador de vencimientos.", Genres = ["Ensayo"], MediaType = "physical", TotalCopies = 1, AvailableCopies = 0 };
 await mongo.Books.InsertOneAsync(overdueBook);
@@ -76,7 +86,7 @@ await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory, "qa-session.
 var app = builder.Build();
 Configure("ConfigurePipeline", app);
 // This route exists only in this isolated test host, never in the application.
-app.MapGet("/__qa", () => new { fixture = "booklibrary-phase5", databaseName, books = books.Select(b => new { b.Id, b.Title }) });
+app.MapGet("/__qa", () => new { fixture = "booklibrary-phase5", databaseName, copyBookId = copyBook?.Id, books = books.Select(b => new { b.Id, b.Title }) });
 app.MapPost("/__qa/circulation/expire/{id}", async (string id, ICirculationStore circulation) => {
     if (!ObjectId.TryParse(id, out _)) return Results.BadRequest();
     await mongo.PickupReservations.UpdateOneAsync(p => p.Id == id && p.Status == "ready", Builders<PickupReservation>.Update.Set(p => p.PickupExpiresAt, DateTime.UtcNow.AddSeconds(-1)));
