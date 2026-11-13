@@ -8,7 +8,7 @@ using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Services;
 
-public sealed class MongoBookStore : IBookStore
+public sealed partial class MongoBookStore : IBookStore
 {
     // Conservative structural check, executed by Mongo so counts and pages agree.
     // Recognizes international DNS hosts, userinfo and IPv6, with ports 0..65535.
@@ -18,8 +18,8 @@ public sealed class MongoBookStore : IBookStore
     private readonly IMongoCollection<Loan> _loans;
     private readonly IMongoCollection<Favorite> _favorites;
     private readonly IMongoCollection<User> _users;
-    public MongoBookStore(MongoDBService database)
-        : this(database.Books, database.Loans, database.Favorites, database.Users) { }
+    public MongoBookStore(MongoDBService database, Branches.BranchRequestContext? branchContext = null)
+        : this(database.Books, database.Loans, database.Favorites, database.Users) { _branchContext = branchContext; }
     public MongoBookStore(IMongoCollection<Book> books, IMongoCollection<Loan> loans, IMongoCollection<Favorite> favorites, IMongoCollection<User> users)
     {
         _books = books; _loans = loans; _favorites = favorites; _users = users;
@@ -27,7 +27,7 @@ public sealed class MongoBookStore : IBookStore
 
     public async Task<PagedResult<BookCatalogEntry>> SearchAsync(NormalizedBookQuery query, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken)
     {
-        FilterDefinition<Book> filter = RenderFilter(query, includeInactive);
+        FilterDefinition<Book> filter = await ContextFilterAsync(query, includeInactive, cancellationToken);
         var total = await _books.CountDocumentsAsync(filter, cancellationToken: cancellationToken);
         var offset = ((long)query.Page - 1) * query.PageSize;
         if (offset >= total) return new([], query.Page, query.PageSize, total);
@@ -40,6 +40,7 @@ public sealed class MongoBookStore : IBookStore
         var books = offset <= int.MaxValue
             ? await _books.Find(filter).Sort(sort).Skip((int)offset).Limit(query.PageSize).ToListAsync(cancellationToken)
             : await _books.Aggregate().Match(filter).Sort(sort).Skip(offset).Limit(query.PageSize).ToListAsync(cancellationToken);
+        await ProjectBranchAsync(books, cancellationToken);
         var counts = await ReservationCountsAsync(books.Select(book => book.Id), cancellationToken);
         var favoriteIds = await FavoriteBookIdsAsync(viewerUsername, books.Select(book => book.Id), cancellationToken);
         return new(books.Select(book => new BookCatalogEntry(book, counts.GetValueOrDefault(book.Id), favoriteIds.Contains(book.Id))).ToArray(), query.Page, query.PageSize, total);
@@ -94,16 +95,21 @@ public sealed class MongoBookStore : IBookStore
 
     public async Task<BookCatalogEntry?> FindCatalogEntryAsync(string id, bool includeInactive, string? viewerUsername, CancellationToken cancellationToken)
     {
-        var filter = Builders<Book>.Filter.Eq(book => book.Id, id);
+        var filter = await ContextFilterAsync(new BookQuery { BookId = id }.Normalize(), includeInactive, cancellationToken);
         if (!includeInactive) filter &= Builders<Book>.Filter.Or(Builders<Book>.Filter.Eq(book => book.IsActive, true), Builders<Book>.Filter.Exists(book => book.IsActive, false));
         var book = await _books.Find(filter).FirstOrDefaultAsync(cancellationToken);
         if (book is null) return null;
+        await ProjectBranchAsync([book], cancellationToken);
         var count = await _loans.CountDocumentsAsync(loan => loan.BookId == id, cancellationToken: cancellationToken);
         var favoriteIds = await FavoriteBookIdsAsync(viewerUsername, [id], cancellationToken);
         return new(book, count, favoriteIds.Contains(id));
     }
 
-    public async Task<Book?> FindByIdAsync(string id, CancellationToken cancellationToken) => (Book?)await _books.Find(book => book.Id == id).FirstOrDefaultAsync(cancellationToken);
+    public async Task<Book?> FindByIdAsync(string id, CancellationToken cancellationToken)
+    {
+        var filter = await ContextFilterAsync(new BookQuery().Normalize(), true, cancellationToken);
+        return await _books.Find(filter & Builders<Book>.Filter.Eq(book => book.Id, id)).FirstOrDefaultAsync(cancellationToken);
+    }
     public Task<bool> IsbnExistsAsync(string normalizedIsbn, string? excludingId, CancellationToken cancellationToken) => _books.Find(book => book.Isbn == normalizedIsbn && book.Id != excludingId).AnyAsync(cancellationToken);
     public async Task InsertAsync(Book book, CancellationToken cancellationToken)
     {
@@ -164,7 +170,15 @@ public sealed class MongoBookStore : IBookStore
             return (await _books.ReplaceOneAsync(transaction, b => b.Id == book.Id, book, cancellationToken: ct)).MatchedCount == 1;
         }, cancellationToken: cancellationToken);
     }
-    public async Task<bool> SetActiveAsync(string id, bool active, DateTime updated, CancellationToken token) => (await _books.UpdateOneAsync(book => book.Id == id, Builders<Book>.Update.Set(book => book.IsActive, active).Set(book => book.UpdatedAt, updated), cancellationToken: token)).MatchedCount == 1;
+    public async Task<bool> SetActiveAsync(string id, bool active, DateTime updated, CancellationToken token)
+    {
+        var branch = await ResolveBranchAsync(token);
+        if (branch is not null)
+        {
+            throw new Branches.BranchAccessException("catalog_version_required");
+        }
+        return (await _books.UpdateOneAsync(book => book.Id == id, Builders<Book>.Update.Set(book => book.IsActive, active).Set(book => book.UpdatedAt, updated), cancellationToken: token)).MatchedCount == 1;
+    }
 
     public async Task<BookMutationResult> DeletePermanentlyAsync(string id, CancellationToken token)
     {
@@ -176,6 +190,8 @@ public sealed class MongoBookStore : IBookStore
                 Builders<Book>.Update.Inc(b => b.ReferenceVersion, 1),
                 new FindOneAndUpdateOptions<Book, Book> { ReturnDocument = ReturnDocument.After }, ct);
             if (book is null) return new BookMutationResult(false, "book_not_found");
+            if (await _books.Database.GetCollection<BranchCatalogEntry>("BranchCatalog").Find(transaction, e => e.BookId == id).AnyAsync(ct))
+                return new BookMutationResult(false, "book_has_references");
             if (book.IsActive) return new BookMutationResult(false, "book_must_be_inactive");
             if (await _books.Database.GetCollection<BookCopy>("BookCopies").Find(transaction, c => c.BookId == id).AnyAsync(ct) ||
                 await _books.Database.GetCollection<CopyHistoryEntry>("CopyHistory").Find(transaction, h => h.BookId == id).AnyAsync(ct) ||
@@ -191,7 +207,7 @@ public sealed class MongoBookStore : IBookStore
 
     public async Task<IReadOnlyList<BookFacetResponse>> GetGenreFacetsAsync(CancellationToken token)
     {
-        var active = Builders<Book>.Filter.Ne(b => b.IsActive, false);
+        var active = await ContextFilterAsync(new BookQuery().Normalize(), false, token);
         var books = await _books.Find(active).Project(b => new Book { CategoryIds = b.CategoryIds, Genres = b.Genres, Genre = b.Genre }).ToListAsync(token);
         var categories = await _books.Database.GetCollection<Category>("Categories").Find(Builders<Category>.Filter.Empty).ToListAsync(token);
         var rows = new Dictionary<string, BookFacetResponse>();
@@ -262,6 +278,7 @@ public sealed class MongoBookStore : IBookStore
             document.Remove("_reservationCounts");
             return new BookCatalogEntry(BsonSerializer.Deserialize<Book>(document), count, false);
         }).ToArray();
+        await ProjectBranchAsync(entries.Select(entry => entry.Book), token);
         var favoriteIds = await FavoriteBookIdsAsync(viewerUsername, entries.Select(entry => entry.Book.Id), token);
         return new(entries.Select(entry => entry with { IsFavorite = favoriteIds.Contains(entry.Book.Id) }).ToArray(), query.Page, query.PageSize, total);
     }

@@ -5,6 +5,7 @@ namespace WebAppBookLibrary.Contracts.Books;
 
 public sealed record BookWriteRequest : IValidatableObject
 {
+    public long? ExpectedMetadataVersion { get; init; }
     public string Title { get; init; } = string.Empty;
     public string? Subtitle { get; init; }
     public IReadOnlyList<string> Authors { get; init; } = [];

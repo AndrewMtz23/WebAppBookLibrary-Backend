@@ -49,13 +49,15 @@ public static class BookMapper
         new(book.Id, book.Title, book.Subtitle, EffectiveAuthors(book), book.CoverUrl, EffectiveMediaType(book), EffectiveGenres(book), EffectiveAvailable(book), EffectiveTotal(book), reservationCount, isFavorite, book.IsActive) { CategoryIds = book.CategoryIds, Categories = book.Categories, InventoryMode = book.InventoryMode };
 
     public static BookDetailResponse ToDetail(Book book, long reservationCount, bool isFavorite) =>
-        new(book.Id, book.Title, book.Subtitle, EffectiveAuthors(book), book.Isbn, string.IsNullOrWhiteSpace(book.Description) ? "Sin descripción disponible para este registro heredado." : book.Description, book.Publisher, book.PublishedDate ?? (book.Year is null ? null : new DateTime(book.Year.Value, 1, 1, 0, 0, 0, DateTimeKind.Utc)), book.Language, book.PageCount, EffectiveGenres(book), book.Tags, book.CoverUrl, EffectiveMediaType(book), EffectiveAvailable(book), EffectiveTotal(book), reservationCount, isFavorite, book.IsActive, book.CreatedAt, book.UpdatedAt) { CategoryIds = book.CategoryIds, Categories = book.Categories, InventoryMode = book.InventoryMode };
+        new(book.Id, book.Title, book.Subtitle, EffectiveAuthors(book), book.Isbn, string.IsNullOrWhiteSpace(book.Description) ? "Sin descripción disponible para este registro heredado." : book.Description, book.Publisher, book.PublishedDate ?? (book.Year is null ? null : new DateTime(book.Year.Value, 1, 1, 0, 0, 0, DateTimeKind.Utc)), book.Language, book.PageCount, EffectiveGenres(book), book.Tags, book.CoverUrl, EffectiveMediaType(book), EffectiveAvailable(book), EffectiveTotal(book), reservationCount, isFavorite, book.IsActive, book.CreatedAt, book.UpdatedAt) { MetadataVersion = book.MetadataVersion, CategoryIds = book.CategoryIds, Categories = book.Categories, InventoryMode = book.InventoryMode };
 
     public static Book ToUpdatedEntity(BookWriteRequest request, Book existing, int activePhysicalLoans, DateTime nowUtc)
     {
         var updated = ToNewEntity(request, existing.Id, nowUtc);
         updated.CreatedAt = existing.CreatedAt;
         updated.ReferenceVersion = existing.ReferenceVersion;
+        updated.MetadataVersion = existing.MetadataVersion;
+        updated.InventoryBranchId = existing.InventoryBranchId;
         updated.IsActive = existing.IsActive;
         updated.AvailableCopies = updated.MediaType == MediaTypes.Physical
             ? updated.TotalCopies - activePhysicalLoans
