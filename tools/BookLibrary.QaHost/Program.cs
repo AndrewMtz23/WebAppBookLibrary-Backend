@@ -82,6 +82,14 @@ var auditEvents = Enumerable.Range(0, 10).Select(index => new LogEntry {
 }).ToArray();
 await mongo.LogEntries.InsertManyAsync(auditEvents);
 await mongo.CreateIndexesAsync();
+if (builder.Configuration["Branches:Enabled"] == "true")
+{
+    var migration = new WebAppBookLibrary.Migrations.BranchMigration(mongo, TimeProvider.System);
+    var input = new WebAppBookLibrary.Migrations.BranchMigrationInput("QA Organization", "CENTRO", "Centro QA", "America/Mexico_City");
+    var preview = await migration.PreviewAsync(input, default);
+    var result = await migration.ApplyAsync(input, preview.Fingerprint, identities.Single(u => u.Role == "admin").Id, default);
+    if (!result.Success) throw new InvalidOperationException("QA branch migration failed: " + result.ErrorCode);
+}
 await File.WriteAllTextAsync(Path.Combine(AppContext.BaseDirectory, "qa-session.json"), JsonSerializer.Serialize(new { databaseName, password, users = identities.Select(u => new { u.Username, u.Role }), books = books.Select(b => new { b.Id, b.Title }) }));
 var app = builder.Build();
 Configure("ConfigurePipeline", app);
