@@ -16,6 +16,7 @@ public class LoanService
 
     private readonly ILoanStore _loanStore;
     private readonly ICirculationStore? _circulation;
+    private readonly Branches.BranchRequestContext? _branchContext;
     private readonly IMongoCollection<Loan> _loans = null!;
     private readonly IMongoCollection<Book> _books = null!;
     private readonly IMongoCollection<User> _users = null!;
@@ -30,9 +31,10 @@ public class LoanService
     public LoanService(
         ILoanStore loanStore,
         MongoDBService dbService,
-        Logservice logService, ICirculationStore? circulation = null)
+        Logservice logService, ICirculationStore? circulation = null, Branches.BranchRequestContext? branchContext = null)
         : this(loanStore, circulation)
     {
+        _branchContext = branchContext;
         _loans = dbService.Loans;
         _books = dbService.Books;
         _users = dbService.Users;
@@ -49,7 +51,7 @@ public class LoanService
             return Failure(LoanOperationErrorCodes.DuplicateActive);
 
         var physical = book.MediaType == MediaTypes.Physical;
-        if (physical && _circulation is not null) return await _circulation.ReserveLegacyAsync(user.Id, bookId, createdBy, nowUtc, token);
+        if (physical && _circulation is not null) return await _circulation.ReserveLegacyAsync(user.Id, bookId, createdBy, nowUtc, token, _branchContext?.BranchId);
         var legacyPhysical = physical && (book.TotalCopies is null || book.AvailableCopies is null);
         var loanId = ObjectId.GenerateNewId().ToString();
         if (physical)
@@ -133,13 +135,13 @@ public class LoanService
         Recorded("created", loan.ReservedAt);
         Recorded("returned", loan.ReturnedAt);
         Recorded("cancelled", loan.CancelledAt);
-        return new(loan, history.OrderBy(e => e.Timestamp).ToArray(), audit.Truncated);
+        return new((await BranchNamesAsync([loan], token)).Single(), history.OrderBy(e => e.Timestamp).ToArray(), audit.Truncated);
     }
 
     public async Task<PagedResult<LoanResponse>> SearchAsync(LoanQuery query, CancellationToken token)
     {
         var page = await _loanStore.SearchDetailsAsync(query.Normalize(), token);
-        return new(page.Items.Select(item => LoanResponse.From(item.Loan, DateTime.UtcNow) with { BookTitle = item.BookTitle, Username = item.Username, DisplayName = item.DisplayName, BookCoverUrl = item.BookCoverUrl, UserAvatarUrl = item.UserAvatarUrl }).ToArray(), page.Page, page.PageSize, page.TotalItems);
+        return new(await BranchNamesAsync(page.Items.Select(item => LoanResponse.From(item.Loan, DateTime.UtcNow) with { BookTitle = item.BookTitle, Username = item.Username, DisplayName = item.DisplayName, BookCoverUrl = item.BookCoverUrl, UserAvatarUrl = item.UserAvatarUrl }), token), page.Page, page.PageSize, page.TotalItems);
     }
 
     public async Task<PagedResult<LoanResponse>?> SearchMineAsync(string username, LoanQuery query, CancellationToken token)
@@ -147,8 +149,16 @@ public class LoanService
         var user = await _loanStore.FindActiveUserAsync(username);
         if (user is null) return null;
         var normalized = query.Normalize() with { UserId = user.Id };
-        var page = await _loanStore.SearchAsync(normalized, token);
-        return new(page.Items.Select(item => LoanResponse.From(item, DateTime.UtcNow)).ToArray(), page.Page, page.PageSize, page.TotalItems);
+        var page = await _loanStore.SearchDetailsAsync(normalized, token);
+        return new(await BranchNamesAsync(page.Items.Select(item => LoanResponse.From(item.Loan, DateTime.UtcNow) with { BookTitle = item.BookTitle, BookCoverUrl = item.BookCoverUrl }), token), page.Page, page.PageSize, page.TotalItems);
+    }
+
+    private async Task<IReadOnlyList<LoanResponse>> BranchNamesAsync(IEnumerable<LoanResponse> source, CancellationToken ct)
+    {
+        var rows = source.ToArray(); var ids = rows.Select(r => r.BranchId).Where(id => id is not null).Distinct().ToArray();
+        if (_loans is null || ids.Length == 0) return rows;
+        var branches = await _loans.Database.GetCollection<Branch>("Branches").Find(b => ids.Contains(b.Id)).Project(b => new { b.Id, b.Name }).ToListAsync(ct);
+        return rows.Select(row => row with { BranchName = branches.SingleOrDefault(b => b.Id == row.BranchId)?.Name }).ToArray();
     }
 
     private async Task<LoanOperationResult> CompleteReservationAsync(string loanId, string username, string callerRole, string nextStatus, DateTime nowUtc, CancellationToken token, WebAppBookLibrary.Contracts.Copies.ReturnPhysicalRequest? request = null)
@@ -167,7 +177,7 @@ public class LoanService
         if (loan.CopyId is not null)
         {
             if (callerRole is not ("librarian" or "admin") || _circulation is null) return Failure(LoanOperationErrorCodes.Forbidden);
-            if (nextStatus != LoanStatuses.Returned || !await _circulation.ReturnPhysicalLoanAsync(loanId, user.Id, token, nextStatus, request))
+            if (nextStatus != LoanStatuses.Returned || !await _circulation.ReturnPhysicalLoanAsync(loanId, user.Id, token, nextStatus, request, _branchContext?.BranchId))
                 return Failure(LoanOperationErrorCodes.InvalidTransition);
             return new(true, string.Empty, await _loanStore.FindLoanAsync(loanId, token), loan.Status == "returned");
         }
@@ -178,8 +188,8 @@ public class LoanService
 
         var isPhysical = string.IsNullOrWhiteSpace(loan.MediaType) || loan.MediaType == MediaTypes.Physical;
         var transitioned = isPhysical
-            ? (_circulation is not null && (loan.PolicyVersion == "circulation-v1" || await _circulation.GetModeAsync(token) != "legacy")
-                ? await _circulation.ReturnPhysicalLoanAsync(loanId, user.Id, token, nextStatus)
+            ? (_circulation is not null && (loan.BranchId is not null || loan.PolicyVersion == "circulation-v1" || await _circulation.GetModeAsync(token) != "legacy")
+                ? await _circulation.ReturnPhysicalLoanAsync(loanId, user.Id, token, nextStatus, branchId: _branchContext?.BranchId)
                 : await _loanStore.CompletePhysicalAsync(loanId, loan.BookId, nextStatus, nowUtc, token))
             : await _loanStore.TransitionAsync(loanId, [LoanStatuses.Active, LoanStatuses.Overdue], nextStatus, nowUtc, token);
         if (!transitioned)

@@ -10,9 +10,10 @@ using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Services;
 
-public sealed class MongoCirculationStore : ICirculationStore
+public sealed partial class MongoCirculationStore : ICirculationStore
 {
     private readonly IMongoDatabase _db;
+    private readonly Branches.BranchRequestContext? _branchContext;
     private Copies.CopyAllocation UnitInventory => new(new MongoDBService(_db), _clock);
     private readonly IMongoCollection<Book> _books;
     private readonly IMongoCollection<Loan> _loans;
@@ -28,14 +29,17 @@ public sealed class MongoCirculationStore : ICirculationStore
     public CirculationOptions Options => _options;
     public Task<string> GetModeAsync(CancellationToken ct) => CirculationMode.ReadAsync(_db, _options.Mode, ct);
 
-    public async Task<WebAppBookLibrary.Contracts.Loans.LoanOperationResult> ReserveLegacyAsync(string userId, string bookId, string actor, DateTime now, CancellationToken ct)
+    public async Task<WebAppBookLibrary.Contracts.Loans.LoanOperationResult> ReserveLegacyAsync(string userId, string bookId, string actor, DateTime now, CancellationToken ct, string? branchId = null)
     {
+        branchId ??= _branchContext?.BranchId;
         await GetModeAsync(ct);
         using var session = await _db.Client.StartSessionAsync(cancellationToken: ct);
         return await session.WithTransactionAsync(async (tx, token) => {
             if (await CirculationMode.GuardAsync(_db, tx, token) != "legacy") return new WebAppBookLibrary.Contracts.Loans.LoanOperationResult(false, "physical_pickup_required");
             var book = await _books.Find(tx, b => b.Id == bookId && b.IsActive && b.MediaType == "physical").FirstOrDefaultAsync(token);
             if (book == null) return new WebAppBookLibrary.Contracts.Loans.LoanOperationResult(false, "book_not_found");
+            var branchError = await ValidateBranchBookAsync(tx, book, branchId, token);
+            if (branchError is not null) return new WebAppBookLibrary.Contracts.Loans.LoanOperationResult(false, branchError);
             if (book.InventoryMode == "unit") return new WebAppBookLibrary.Contracts.Loans.LoanOperationResult(false, "physical_pickup_required");
             var available = book.AvailableCopies ?? (book.IsAvailable ? 1 : 0);
             if (available <= 0) return new WebAppBookLibrary.Contracts.Loans.LoanOperationResult(false, "book_unavailable");
@@ -44,7 +48,7 @@ public sealed class MongoCirculationStore : ICirculationStore
             if (await _pickupReservations.Find(tx, p => p.BookId == bookId && p.Status == "ready").AnyAsync(token) || await _waitlist.Find(tx, w => w.BookId == bookId && (w.Status == "queued" || w.Status == "offered")).AnyAsync(token))
                 return new WebAppBookLibrary.Contracts.Loans.LoanOperationResult(false, "physical_pickup_required");
             await UserReferenceGuard.TouchAsync(_users, tx, userId, token);
-            var loan = new Loan { Id = ObjectId.GenerateNewId().ToString(), UserId = userId, BookId = bookId, MediaType = "physical", Status = "active", ReservedAt = now, LoanDate = now, DueAt = now.AddDays(14), PolicyVersion = "legacy", CreatedBy = actor, ActiveReservationKey = $"{userId}:{bookId}" };
+            var loan = new Loan { Id = ObjectId.GenerateNewId().ToString(), UserId = userId, BookId = bookId, BranchId = branchId, MediaType = "physical", Status = "active", ReservedAt = now, LoanDate = now, DueAt = now.AddDays(14), PolicyVersion = "legacy", CreatedBy = actor, ActiveReservationKey = $"{userId}:{bookId}" };
             await _books.UpdateOneAsync(tx, b => b.Id == bookId, Builders<Book>.Update.Set(b => b.AvailableCopies, available - 1).Set(b => b.TotalCopies, book.TotalCopies ?? 1).Set(b => b.IsAvailable, available > 1).Inc(b => b.ReferenceVersion, 1), cancellationToken: token);
             await _loans.InsertOneAsync(tx, loan, cancellationToken: token);
             if (_notificationsEnabled) await NotificationEvents.AppendAsync(_db, tx, loan, "reserved", now, token);
@@ -55,9 +59,10 @@ public sealed class MongoCirculationStore : ICirculationStore
     public MongoCirculationStore(
         MongoDBService mongoDbService,
         IOptions<CirculationOptions> options,
-        IOptions<NotificationOptions>? notificationOptions = null, TimeProvider? clock = null)
+        IOptions<NotificationOptions>? notificationOptions = null, TimeProvider? clock = null, Branches.BranchRequestContext? branchContext = null)
     {
         _db = mongoDbService._database;
+        _branchContext = branchContext;
         _books = mongoDbService.Books;
         _loans = mongoDbService.Loans;
         _users = mongoDbService.Users;
@@ -168,8 +173,9 @@ public sealed class MongoCirculationStore : ICirculationStore
 
     #region Waitlist Operations
 
-    public async Task<WaitlistJoinResult> JoinWaitlistAsync(string userId, string bookId, CancellationToken ct, string? idempotencyKey = null)
+    public async Task<WaitlistJoinResult> JoinWaitlistAsync(string userId, string bookId, CancellationToken ct, string? idempotencyKey = null, string? branchId = null)
     {
+        branchId ??= _branchContext?.BranchId;
         await GetModeAsync(ct);
 
         using var session = await _db.Client.StartSessionAsync(cancellationToken: ct);
@@ -178,7 +184,7 @@ public sealed class MongoCirculationStore : ICirculationStore
             if (!string.IsNullOrEmpty(idempotencyKey))
             {
                 var prior = await _waitlist.Find(tx, p => p.UserId == userId && p.IdempotencyKey == idempotencyKey).FirstOrDefaultAsync(token);
-                if (prior != null) return prior.BookId == bookId ? new WaitlistJoinResult(true, null, prior) : new WaitlistJoinResult(false, "idempotency_conflict");
+                if (prior != null) return prior.BookId == bookId && prior.BranchId == branchId ? new WaitlistJoinResult(true, null, prior) : new WaitlistJoinResult(false, "idempotency_conflict");
             }
             if (await CirculationMode.GuardAsync(_db, tx, token) != "active") return new WaitlistJoinResult(false, "circulation_paused");
             var user = await _users.Find(tx, u => u.Id == userId && u.IsActive).FirstOrDefaultAsync(token);
@@ -186,6 +192,8 @@ public sealed class MongoCirculationStore : ICirculationStore
 
             var book = await _books.Find(tx, b => b.Id == bookId && b.IsActive && b.MediaType == MediaTypes.Physical).FirstOrDefaultAsync(token);
             if (book is null) return new WaitlistJoinResult(false, "book_not_found");
+            var branchError = await ValidateBranchBookAsync(tx, book, branchId, token);
+            if (branchError is not null) return new WaitlistJoinResult(false, branchError);
             if (!await InventoryConsistentAsync(tx, book, token)) return new WaitlistJoinResult(false, "inventory_reconciliation_required");
 
             // Guard: active loan check
@@ -205,8 +213,8 @@ public sealed class MongoCirculationStore : ICirculationStore
             await _books.UpdateOneAsync(tx, b => b.Id == bookId, Builders<Book>.Update.Inc(b => b.ReferenceVersion, 1), cancellationToken: token);
 
             // Check if queue is empty and units are available for immediate offer
-            var queueCount = await _waitlist.CountDocumentsAsync(tx, w => w.BookId == bookId && w.Status == WaitlistStatuses.Queued, cancellationToken: token);
-            var availableCopies = book.AvailableCopies ?? 0;
+            var queueCount = await _waitlist.CountDocumentsAsync(tx, w => w.BookId == bookId && w.BranchId == branchId && w.Status == WaitlistStatuses.Queued, cancellationToken: token);
+            var availableCopies = await BranchAvailableAsync(tx, book, branchId, token);
 
             if (queueCount == 0 && availableCopies > 0)
             {
@@ -227,6 +235,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     Id = pickupId,
                     UserId = userId,
                     BookId = bookId,
+                    BranchId = branchId,
                     Status = PickupReservationStatuses.Ready,
                     ReadyAt = now,
                     PickupExpiresAt = expiresAt,
@@ -234,7 +243,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     PolicySnapshot = snapshot,
                     Version = 1
                 };
-                reservation.CopyId = (await UnitInventory.HoldAsync(tx, reservation.BookId, reservation.Id, token))?.Id;
+                reservation.CopyId = (await UnitInventory.HoldAsync(tx, reservation.BookId, reservation.Id, token, branchId))?.Id;
                 await _pickupReservations.InsertOneAsync(tx, reservation, cancellationToken: token);
 
                 var entry = new WaitlistEntry
@@ -243,6 +252,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     Id = entryId,
                     UserId = userId,
                     BookId = bookId,
+                    BranchId = branchId,
                     Status = WaitlistStatuses.Offered,
                     CreatedAt = now,
                     OfferedAt = now,
@@ -252,7 +262,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                 };
                 await _waitlist.InsertOneAsync(tx, entry, cancellationToken: token);
 
-                var newAvailable = availableCopies - 1;
+                var newAvailable = (book.AvailableCopies ?? 0) - 1;
                 var newRetained = (book.RetainedCopies ?? 0) + 1;
                 await _books.UpdateOneAsync(tx, b => b.Id == bookId,
                     Builders<Book>.Update
@@ -272,7 +282,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                         _db, tx, userId, eventKey, "pickup_ready",
                         "Tu libro está listo para recoger",
                         $"Tienes 48 horas (hasta {expiresAt:dd/MM/yyyy HH:mm} UTC) para recoger tu ejemplar.",
-                        bookId, null, expiresAt, now, token);
+                        bookId, null, expiresAt, now, token, branchId: branchId);
                 }
 
                 return new WaitlistJoinResult(true, null, entry, 1, true, reservation);
@@ -286,6 +296,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     Id = ObjectId.GenerateNewId().ToString(),
                     UserId = userId,
                     BookId = bookId,
+                    BranchId = branchId,
                     Status = WaitlistStatuses.Queued,
                     CreatedAt = now,
                     Version = 1
@@ -382,7 +393,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                 entry.CreatedAt,
                 queuePos,
                 entry.OfferExpiresAt,
-                entry.PickupReservationId
+                entry.PickupReservationId, entry.BranchId, await BranchNameAsync(entry.BranchId, ct)
             ));
         }
 
@@ -391,7 +402,9 @@ public sealed class MongoCirculationStore : ICirculationStore
 
     public async Task<int> GetQueuePositionAsync(string bookId, DateTime createdAt, string entryId, CancellationToken ct)
     {
+        var branchId = (await _waitlist.Find(w => w.Id == entryId).FirstOrDefaultAsync(ct))?.BranchId;
         var filter = Builders<WaitlistEntry>.Filter.Eq(w => w.BookId, bookId) &
+                     Builders<WaitlistEntry>.Filter.Eq(w => w.BranchId, branchId) &
                      Builders<WaitlistEntry>.Filter.Eq(w => w.Status, WaitlistStatuses.Queued) &
                      (Builders<WaitlistEntry>.Filter.Lt(w => w.CreatedAt, createdAt) |
                       (Builders<WaitlistEntry>.Filter.Eq(w => w.CreatedAt, createdAt) & Builders<WaitlistEntry>.Filter.Lt(w => w.Id, entryId)));
@@ -404,8 +417,9 @@ public sealed class MongoCirculationStore : ICirculationStore
 
     #region Pickup Reservation Operations
 
-    public async Task<ReservePickupResult> ReserveForPickupAsync(string userId, string bookId, string? idempotencyKey, CancellationToken ct)
+    public async Task<ReservePickupResult> ReserveForPickupAsync(string userId, string bookId, string? idempotencyKey, CancellationToken ct, string? branchId = null)
     {
+        branchId ??= _branchContext?.BranchId;
         await GetModeAsync(ct);
 
         using var session = await _db.Client.StartSessionAsync(cancellationToken: ct);
@@ -415,7 +429,7 @@ public sealed class MongoCirculationStore : ICirculationStore
             if (!string.IsNullOrEmpty(idempotencyKey))
             {
                 var prior = await _pickupReservations.Find(tx, p => p.UserId == userId && p.IdempotencyKey == idempotencyKey).FirstOrDefaultAsync(token);
-                if (prior != null) return prior.BookId == bookId ? new ReservePickupResult(true, null, prior, true) : new ReservePickupResult(false, "idempotency_conflict");
+                if (prior != null) return prior.BookId == bookId && prior.BranchId == branchId ? new ReservePickupResult(true, null, prior, true) : new ReservePickupResult(false, "idempotency_conflict");
             }
             if (await CirculationMode.GuardAsync(_db, tx, token) != "active") return new ReservePickupResult(false, "circulation_paused");
             var user = await _users.Find(tx, u => u.Id == userId && u.IsActive).FirstOrDefaultAsync(token);
@@ -423,6 +437,8 @@ public sealed class MongoCirculationStore : ICirculationStore
 
             var book = await _books.Find(tx, b => b.Id == bookId && b.IsActive && b.MediaType == MediaTypes.Physical).FirstOrDefaultAsync(token);
             if (book is null) return new ReservePickupResult(false, "book_not_found");
+            var branchError = await ValidateBranchBookAsync(tx, book, branchId, token);
+            if (branchError is not null) return new ReservePickupResult(false, branchError);
             if (!await InventoryConsistentAsync(tx, book, token)) return new ReservePickupResult(false, "inventory_reconciliation_required");
 
             // Guard: check duplicate active loans
@@ -432,17 +448,17 @@ public sealed class MongoCirculationStore : ICirculationStore
             // Guard: check duplicate ready pickup
             var existingPickup = await _pickupReservations.Find(tx, p => p.UserId == userId && p.BookId == bookId && p.Status == PickupReservationStatuses.Ready).FirstOrDefaultAsync(token);
             if (existingPickup is not null)
-                return new ReservePickupResult(true, null, existingPickup, true);
+                return existingPickup.BranchId == branchId ? new ReservePickupResult(true, null, existingPickup, true) : new ReservePickupResult(false, "duplicate_active_pickup");
 
             // Guard: active waitlist
             var hasActiveWaitlist = await _waitlist.Find(tx, w => w.UserId == userId && w.BookId == bookId && (w.Status == WaitlistStatuses.Queued || w.Status == WaitlistStatuses.Offered)).AnyAsync(token);
             if (hasActiveWaitlist) return new ReservePickupResult(false, "duplicate_waitlist_entry");
 
             // FIFO protection: if any readers are waiting in waitlist, direct reservation is rejected (must join waitlist)
-            var hasQueuedWaitlist = await _waitlist.Find(tx, w => w.BookId == bookId && w.Status == WaitlistStatuses.Queued).AnyAsync(token);
+            var hasQueuedWaitlist = await _waitlist.Find(tx, w => w.BookId == bookId && w.BranchId == branchId && w.Status == WaitlistStatuses.Queued).AnyAsync(token);
             if (hasQueuedWaitlist) return new ReservePickupResult(false, "waitlist_priority_required");
 
-            var availableCopies = book.AvailableCopies ?? 0;
+            var availableCopies = await BranchAvailableAsync(tx, book, branchId, token);
             if (availableCopies <= 0) return new ReservePickupResult(false, "book_unavailable");
 
             var now = _clock.GetUtcNow().UtcDateTime;
@@ -464,16 +480,17 @@ public sealed class MongoCirculationStore : ICirculationStore
                 IdempotencyKey = idempotencyKey,
                 UserId = userId,
                 BookId = bookId,
+                    BranchId = branchId,
                 Status = PickupReservationStatuses.Ready,
                 ReadyAt = now,
                 PickupExpiresAt = expiresAt,
                 PolicySnapshot = snapshot,
                 Version = 1
             };
-            reservation.CopyId = (await UnitInventory.HoldAsync(tx, reservation.BookId, reservation.Id, token))?.Id;
+            reservation.CopyId = (await UnitInventory.HoldAsync(tx, reservation.BookId, reservation.Id, token, branchId))?.Id;
                 await _pickupReservations.InsertOneAsync(tx, reservation, cancellationToken: token);
 
-            var newAvailable = availableCopies - 1;
+            var newAvailable = (book.AvailableCopies ?? 0) - 1;
             var newRetained = (book.RetainedCopies ?? 0) + 1;
             await _books.UpdateOneAsync(tx, b => b.Id == bookId,
                 Builders<Book>.Update
@@ -493,7 +510,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     _db, tx, userId, eventKey, "pickup_ready",
                     "Tu libro está listo para recoger",
                     $"Tienes 48 horas (hasta {expiresAt:dd/MM/yyyy HH:mm} UTC) para recoger tu ejemplar en la biblioteca.",
-                    bookId, null, expiresAt, now, token);
+                    bookId, null, expiresAt, now, token, branchId: branchId);
             }
 
             return new ReservePickupResult(true, null, reservation);
@@ -532,7 +549,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                 p.CancelledAt,
                 p.CancelledReason,
                 p.LoanId,
-                p.Version, p.CopyId
+                p.Version, p.CopyId, p.BranchId, await BranchNameAsync(p.BranchId, ct)
             ));
         }
 
@@ -546,6 +563,8 @@ public sealed class MongoCirculationStore : ICirculationStore
 
         var builder = Builders<PickupReservation>.Filter;
         var filter = builder.Empty;
+        var branch = await Branches.BranchRequestContext.ResolveAsync(new MongoDBService(_db), _branchContext, ct);
+        if (branch is not null) filter &= Builders<PickupReservation>.Filter.Eq(x => x.BranchId, branch);
         if (!string.IsNullOrWhiteSpace(status))
             filter &= builder.Eq(p => p.Status, status);
 
@@ -584,20 +603,23 @@ public sealed class MongoCirculationStore : ICirculationStore
                 p.CancelledAt,
                 p.CancelledReason,
                 p.LoanId,
-                p.Version, p.CopyId
+                p.Version, p.CopyId, p.BranchId, await BranchNameAsync(p.BranchId, ct)
             ));
         }
 
         return new PickupReservationListPage(items, (int)total, page, pageSize);
     }
 
-    public async Task<CollectPickupResult> CollectPickupReservationAsync(string pickupId, string staffUserId, long expectedVersion, CancellationToken ct, WebAppBookLibrary.Contracts.Copies.CopySelection? copySelection = null)
+    public async Task<CollectPickupResult> CollectPickupReservationAsync(string pickupId, string staffUserId, long expectedVersion, CancellationToken ct, WebAppBookLibrary.Contracts.Copies.CopySelection? copySelection = null, string? branchId = null)
     {
+        branchId ??= _branchContext?.BranchId;
         using var session = await _db.Client.StartSessionAsync(cancellationToken: ct);
         return await session.WithTransactionAsync(async (tx, token) =>
         {
             var reservation = await _pickupReservations.Find(tx, p => p.Id == pickupId).FirstOrDefaultAsync(token);
             if (reservation is null) return new CollectPickupResult(false, "pickup_not_found");
+            var branchError = await ValidateStaffBranchAsync(tx, staffUserId, reservation.BranchId, branchId, token);
+            if (branchError is not null) return new CollectPickupResult(false, branchError);
 
             if (reservation.CopyId is not null && (copySelection is null || copySelection.CopyId != reservation.CopyId))
                 return new CollectPickupResult(false, "copy_selection_required");
@@ -647,6 +669,7 @@ public sealed class MongoCirculationStore : ICirculationStore
             {
                 Id = loanId,
                 BookId = reservation.BookId,
+                BranchId = reservation.BranchId,
                 UserId = reservation.UserId,
                 MediaType = MediaTypes.Physical,
                 Status = LoanStatuses.Active,
@@ -719,20 +742,22 @@ public sealed class MongoCirculationStore : ICirculationStore
                     _db, tx, reservation.UserId, eventKey, "loan_collected",
                     "Préstamo entregado",
                     $"Se confirmó la entrega de '{book.Title}'. Fecha límite de devolución: {dueAt:dd/MM/yyyy}.",
-                    reservation.BookId, loanId, dueAt, now, token);
+                    reservation.BookId, loanId, dueAt, now, token, branchId: reservation.BranchId);
             }
 
             return new CollectPickupResult(true, null, loan, reservation);
         }, cancellationToken: ct);
     }
 
-    public async Task<bool> CancelPickupReservationAsync(string pickupId, string actorId, bool isStaff, string? reason, long expectedVersion, CancellationToken ct)
+    public async Task<bool> CancelPickupReservationAsync(string pickupId, string actorId, bool isStaff, string? reason, long expectedVersion, CancellationToken ct, string? branchId = null)
     {
+        branchId ??= _branchContext?.BranchId;
         using var session = await _db.Client.StartSessionAsync(cancellationToken: ct);
         return await session.WithTransactionAsync(async (tx, token) =>
         {
             var reservation = await _pickupReservations.Find(tx, p => p.Id == pickupId).FirstOrDefaultAsync(token);
             if (reservation is null) return false;
+            if (isStaff && await ValidateStaffBranchAsync(tx, actorId, reservation.BranchId, branchId, token) is not null) return false;
 
             if (reservation.Status is PickupReservationStatuses.Cancelled or PickupReservationStatuses.Expired)
                 return true; // Idempotent
@@ -784,7 +809,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     _db, tx, reservation.UserId, eventKey, "pickup_cancelled",
                     "Reserva de recogida cancelada",
                     "Tu reserva para recoger el libro ha sido cancelada.",
-                    reservation.BookId, null, null, now, token);
+                    reservation.BookId, null, null, now, token, branchId: reservation.BranchId);
             }
 
             return true;
@@ -831,7 +856,7 @@ public sealed class MongoCirculationStore : ICirculationStore
             if (hasPending) return new RenewalRequestResult(false, "duplicate_renewal_request");
 
             // Check no waitlist entries exist for this book!
-            var hasWaitlist = await _waitlist.Find(tx, w => w.BookId == loan.BookId && w.Status == WaitlistStatuses.Queued).AnyAsync(token);
+            var hasWaitlist = await _waitlist.Find(tx, w => w.BookId == loan.BookId && w.BranchId == loan.BranchId && w.Status == WaitlistStatuses.Queued).AnyAsync(token);
             if (hasWaitlist) return new RenewalRequestResult(false, "waitlist_present");
 
             if (!await _users.Find(tx, u => u.Id == userId && u.IsActive).AnyAsync(token) || !await _books.Find(tx, b => b.Id == loan.BookId && b.IsActive).AnyAsync(token)) return new RenewalRequestResult(false, "renewal_no_longer_eligible");
@@ -847,6 +872,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                 LoanId = loanId,
                 UserId = userId,
                 BookId = loan.BookId,
+                BranchId = loan.BranchId,
                 Status = RenewalRequestStatuses.Pending,
                 RequestedAt = now,
                 OriginalDueAt = loan.DueAt.Value,
@@ -867,7 +893,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     _db, tx, userId, eventKey, "renewal_requested",
                     "Solicitud de renovación enviada",
                     $"Tu solicitud de ampliación de plazo para el libro se encuentra en revisión.",
-                    loan.BookId, loanId, requestedDueAt, now, token);
+                    loan.BookId, loanId, requestedDueAt, now, token, branchId: loan.BranchId);
             }
 
             return new RenewalRequestResult(true, null, request);
@@ -908,7 +934,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                 r.DecidedAt,
                 r.DecidedByUserId,
                 r.DecisionReason,
-                r.Version
+                r.Version, r.BranchId, await BranchNameAsync(r.BranchId, ct)
             ));
         }
 
@@ -922,6 +948,8 @@ public sealed class MongoCirculationStore : ICirculationStore
 
         var builder = Builders<RenewalRequest>.Filter;
         var filter = builder.Empty;
+        var branch = await Branches.BranchRequestContext.ResolveAsync(new MongoDBService(_db), _branchContext, ct);
+        if (branch is not null) filter &= Builders<RenewalRequest>.Filter.Eq(x => x.BranchId, branch);
         if (!string.IsNullOrWhiteSpace(status))
             filter &= builder.Eq(r => r.Status, status);
 
@@ -962,20 +990,23 @@ public sealed class MongoCirculationStore : ICirculationStore
                 r.DecidedAt,
                 r.DecidedByUserId,
                 r.DecisionReason,
-                r.Version
+                r.Version, r.BranchId, await BranchNameAsync(r.BranchId, ct)
             ));
         }
 
         return new RenewalRequestListPage(items, (int)total, page, pageSize);
     }
 
-    public async Task<RenewalDecisionResult> DecideRenewalAsync(string renewalRequestId, string staffUserId, bool approve, string? decisionReason, long expectedVersion, CancellationToken ct)
+    public async Task<RenewalDecisionResult> DecideRenewalAsync(string renewalRequestId, string staffUserId, bool approve, string? decisionReason, long expectedVersion, CancellationToken ct, string? branchId = null)
     {
+        branchId ??= _branchContext?.BranchId;
         using var session = await _db.Client.StartSessionAsync(cancellationToken: ct);
         return await session.WithTransactionAsync(async (tx, token) =>
         {
             var request = await _renewalRequests.Find(tx, r => r.Id == renewalRequestId).FirstOrDefaultAsync(token);
             if (request is null) return new RenewalDecisionResult(false, "renewal_request_not_found");
+            var branchError = await ValidateStaffBranchAsync(tx, staffUserId, request.BranchId, branchId, token);
+            if (branchError is not null) return new RenewalDecisionResult(false, branchError);
 
             if (request.Status != RenewalRequestStatuses.Pending)
                 return new RenewalDecisionResult(false, "renewal_not_pending");
@@ -999,7 +1030,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                 await UserReferenceGuard.TouchAsync(_users, tx, loan.UserId, token);
                 await _books.UpdateOneAsync(tx, b => b.Id == loan.BookId, Builders<Book>.Update.Inc(b => b.ReferenceVersion, 1), cancellationToken: token);
                 // Re-verify waitlist priority: if someone queued up in the meantime, cannot approve!
-                var hasWaitlist = await _waitlist.Find(tx, w => w.BookId == loan.BookId && w.Status == WaitlistStatuses.Queued).AnyAsync(token);
+                var hasWaitlist = await _waitlist.Find(tx, w => w.BookId == loan.BookId && w.BranchId == loan.BranchId && w.Status == WaitlistStatuses.Queued).AnyAsync(token);
                 if (hasWaitlist) return new RenewalDecisionResult(false, "waitlist_present");
 
                 // Re-verify not overdue
@@ -1079,7 +1110,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                         _db, tx, loan.UserId, eventKey, "renewal_rejected",
                         "Renovación no aprobada",
                         $"Tu solicitud de ampliación de plazo no fue aprobada: {decisionReason ?? "Plazo máximo alcanzado o ejemplar solicitado."}",
-                        loan.BookId, loan.Id, loan.DueAt, now, token);
+                        loan.BookId, loan.Id, loan.DueAt, now, token, branchId: loan.BranchId);
                 }
 
                 return new RenewalDecisionResult(true, null, request, loan);
@@ -1091,13 +1122,15 @@ public sealed class MongoCirculationStore : ICirculationStore
 
     #region Returns and Expirations
 
-    public async Task<bool> ReturnPhysicalLoanAsync(string loanId, string staffUserId, CancellationToken ct, string nextStatus = "returned", WebAppBookLibrary.Contracts.Copies.ReturnPhysicalRequest? request = null)
+    public async Task<bool> ReturnPhysicalLoanAsync(string loanId, string staffUserId, CancellationToken ct, string nextStatus = "returned", WebAppBookLibrary.Contracts.Copies.ReturnPhysicalRequest? request = null, string? branchId = null)
     {
+        branchId ??= _branchContext?.BranchId;
         using var session = await _db.Client.StartSessionAsync(cancellationToken: ct);
         return await session.WithTransactionAsync(async (tx, token) =>
         {
             var loan = await _loans.Find(tx, l => l.Id == loanId).FirstOrDefaultAsync(token);
             if (loan is null) return false;
+            if (await ValidateStaffBranchAsync(tx, staffUserId, loan.BranchId, branchId, token) is not null) return false;
 
             if (loan.MediaType == MediaTypes.Digital || nextStatus is not ("returned" or "cancelled") || (loan.PolicyVersion == "circulation-v1" && nextStatus == "cancelled")) return false;
             BookCopy? returningCopy = null;
@@ -1168,7 +1201,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     _db, tx, loan.UserId, eventKey, nextStatus,
                     nextStatus == "cancelled" ? "Reserva cancelada" : "Devolución confirmada",
                     nextStatus == "cancelled" ? "Tu reserva fue cancelada." : "Registramos la devolución de tu libro.",
-                    loan.BookId, loanId, null, now, token);
+                    loan.BookId, loanId, null, now, token, branchId: loan.BranchId);
             }
 
             return true;
@@ -1184,14 +1217,16 @@ public sealed class MongoCirculationStore : ICirculationStore
         var filter = Builders<WaitlistEntry>.Filter.Eq(w => w.Status, WaitlistStatuses.Queued);
         if (cursor.Length > 0) filter &= Builders<WaitlistEntry>.Filter.Gt(w => w.Id, cursor);
         var rows = await _waitlist.Find(filter).SortBy(w => w.Id).Limit(100).ToListAsync(ct);
-        foreach (var id in rows.Select(w => w.BookId).Distinct())
+        foreach (var pair in rows.Select(w => new { w.BookId, w.BranchId }).Distinct())
         {
+            var id = pair.BookId;
             using var session = await _db.Client.StartSessionAsync(cancellationToken: ct);
             await session.WithTransactionAsync(async (tx, token) => {
                 var book = await _books.Find(tx, b => b.Id == id && b.IsActive && b.AvailableCopies > 0).FirstOrDefaultAsync(token);
-                if (book == null || !await _waitlist.Find(tx, w => w.BookId == id && w.Status == WaitlistStatuses.Queued).AnyAsync(token)) return false;
+                if (book == null || !await _waitlist.Find(tx, w => w.BookId == id && w.BranchId == pair.BranchId && w.Status == WaitlistStatuses.Queued).AnyAsync(token)) return false;
+                if (await ValidateBranchBookAsync(tx, book, pair.BranchId, token) is not null || await BranchAvailableAsync(tx, book, pair.BranchId, token) <= 0) return false;
                 await _books.UpdateOneAsync(tx, b => b.Id == id, Builders<Book>.Update.Inc(b => b.AvailableCopies, -1).Set(b => b.IsAvailable, book.AvailableCopies > 1).Inc(b => b.ReferenceVersion, 1), cancellationToken: token);
-                await ReallocateOrReleaseUnitAsync(tx, id, _clock.GetUtcNow().UtcDateTime, token, fromRetention: false);
+                await ReallocateOrReleaseUnitAsync(tx, id, _clock.GetUtcNow().UtcDateTime, token, fromRetention: false, branchId: pair.BranchId);
                 return true;
             }, cancellationToken: ct);
         }
@@ -1251,7 +1286,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                             _db, tx, current.UserId, eventKey, "pickup_expired",
                             "Reserva de recogida expirada",
                             "Tu plazo de 48 horas para recoger el ejemplar ha terminado y la unidad fue reasignada.",
-                            current.BookId, null, null, now, token);
+                            current.BookId, null, null, now, token, branchId: current.BranchId);
                     }
 
                     return true;
@@ -1279,14 +1314,16 @@ public sealed class MongoCirculationStore : ICirculationStore
         return retained == (book.RetainedCopies ?? 0) && book.AvailableCopies + retained + loaned == book.TotalCopies;
     }
 
-    private async Task<bool> ReallocateOrReleaseUnitAsync(IClientSessionHandle tx, string bookId, DateTime now, CancellationToken ct, bool fromRetention = true, string? copyId = null)
+    private async Task<bool> ReallocateOrReleaseUnitAsync(IClientSessionHandle tx, string bookId, DateTime now, CancellationToken ct, bool fromRetention = true, string? copyId = null, string? branchId = null)
     {
         var book = await _books.Find(tx, b => b.Id == bookId).FirstOrDefaultAsync(ct);
         if (book is null) return false;
+        branchId ??= book.InventoryBranchId;
 
         if (book.InventoryMode == "unit" && copyId is not null)
         {
             var released = await UnitInventory.ReleaseAsync(tx, copyId, ct);
+            branchId = released.BranchId;
             if (released.Status != "available")
             {
                 await new Copies.CopyContext(new MongoDBService(_db), _clock).RefreshProjectionAsync(tx, bookId, ct);
@@ -1295,7 +1332,7 @@ public sealed class MongoCirculationStore : ICirculationStore
         }
 
         // Find next eligible queued waitlist entry
-        var nextEntry = await _waitlist.Find(tx, w => w.BookId == bookId && w.Status == WaitlistStatuses.Queued)
+        var nextEntry = await _waitlist.Find(tx, w => w.BookId == bookId && w.BranchId == branchId && w.Status == WaitlistStatuses.Queued)
             .SortBy(w => w.CreatedAt).ThenBy(w => w.Id)
             .FirstOrDefaultAsync(ct);
 
@@ -1305,7 +1342,7 @@ public sealed class MongoCirculationStore : ICirculationStore
             await _waitlist.UpdateOneAsync(tx, w => w.Id == nextEntry.Id, Builders<WaitlistEntry>.Update.Set(w => w.Status, WaitlistStatuses.Cancelled).Set(w => w.ClosedReason, "Inactive account").Inc(w => w.Version, 1), cancellationToken: ct);
             await RecordHistoryAsync(_history, tx, "waitlist", nextEntry.Id, bookId, nextEntry.UserId, "queued", "cancelled", null, "worker", now, "Inactive account", ct);
             skipped++;
-            nextEntry = await _waitlist.Find(tx, w => w.BookId == bookId && w.Status == WaitlistStatuses.Queued).SortBy(w => w.CreatedAt).ThenBy(w => w.Id).FirstOrDefaultAsync(ct);
+            nextEntry = await _waitlist.Find(tx, w => w.BookId == bookId && w.BranchId == branchId && w.Status == WaitlistStatuses.Queued).SortBy(w => w.CreatedAt).ThenBy(w => w.Id).FirstOrDefaultAsync(ct);
         }
         if (skipped < 20 && nextEntry is not null && book.IsActive && await CirculationMode.GuardAsync(_db, tx, ct) == CirculationModes.Active)
         {
@@ -1324,6 +1361,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                 Id = pickupId,
                 UserId = nextEntry.UserId,
                 BookId = bookId,
+                BranchId = branchId,
                 Status = PickupReservationStatuses.Ready,
                 ReadyAt = now,
                 PickupExpiresAt = expiresAt,
@@ -1331,7 +1369,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                 PolicySnapshot = snapshot,
                 Version = 1
             };
-            reservation.CopyId = (await UnitInventory.HoldAsync(tx, reservation.BookId, reservation.Id, ct))?.Id;
+            reservation.CopyId = (await UnitInventory.HoldAsync(tx, reservation.BookId, reservation.Id, ct, branchId))?.Id;
             await _pickupReservations.InsertOneAsync(tx, reservation, cancellationToken: ct);
 
             await _waitlist.UpdateOneAsync(tx,
@@ -1356,7 +1394,7 @@ public sealed class MongoCirculationStore : ICirculationStore
                     _db, tx, nextEntry.UserId, eventKey, "pickup_ready",
                     "Tu libro está listo para recoger",
                     $"Tienes 48 horas (hasta {expiresAt:dd/MM/yyyy HH:mm} UTC) para recoger tu ejemplar en la biblioteca.",
-                    bookId, null, expiresAt, now, ct);
+                    bookId, null, expiresAt, now, ct, branchId: branchId);
             }
 
             await UserReferenceGuard.TouchAsync(_users, tx, nextEntry.UserId, ct);
@@ -1398,8 +1436,12 @@ public sealed class MongoCirculationStore : ICirculationStore
         string? reason,
         CancellationToken ct)
     {
+        var source = entityType switch { "loan" => "Loans", "pickup_reservation" => "PickupReservations", "waitlist" => "WaitlistEntries", "renewal_request" => "RenewalRequests", _ => null };
+        var document = source is null ? null : await history.Database.GetCollection<BsonDocument>(source).Find(tx, new BsonDocument("_id", ObjectId.Parse(entityId))).FirstOrDefaultAsync(ct);
+        var persistedBranch = document?.GetValue("BranchId", BsonNull.Value);
         var entry = new CirculationHistoryEntry
         {
+            BranchId = persistedBranch is null || persistedBranch.IsBsonNull ? null : persistedBranch.AsString,
             EntityType = entityType,
             EntityId = entityId,
             BookId = bookId,

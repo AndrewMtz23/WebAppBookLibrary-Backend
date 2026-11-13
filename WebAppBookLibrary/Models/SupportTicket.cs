@@ -3,6 +3,7 @@ using MongoDB.Bson.Serialization.Attributes;
 namespace WebAppBookLibrary.Models;
 public sealed class SupportTicket
 {
+    public string? BranchId { get; set; }
     [BsonId, BsonRepresentation(BsonType.ObjectId)] public string Id { get; set; } = ObjectId.GenerateNewId().ToString();
     public string RequesterId { get; set; } = "";
     public string Category { get; set; } = "";

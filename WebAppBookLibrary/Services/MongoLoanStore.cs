@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
+using WebAppBookLibrary.Services.Branches;
 using WebAppBookLibrary.Domain.Books;
 using WebAppBookLibrary.Domain.Loans;
 using WebAppBookLibrary.Contracts.Loans;
@@ -15,11 +16,13 @@ public sealed class MongoLoanStore : ILoanStore
     private readonly IMongoCollection<Loan> _loans;
     private readonly IMongoCollection<User> _users;
     private readonly bool _notificationsEnabled = true;
+    private readonly BranchRequestContext? _branchContext;
 
-    public MongoLoanStore(MongoDBService mongoDBService, Microsoft.Extensions.Options.IOptions<WebAppBookLibrary.Configuration.NotificationOptions>? options = null)
+    public MongoLoanStore(MongoDBService mongoDBService, Microsoft.Extensions.Options.IOptions<WebAppBookLibrary.Configuration.NotificationOptions>? options = null, BranchRequestContext? branchContext = null)
         : this(mongoDBService.Books, mongoDBService.Loans, mongoDBService.Users)
     {
         _notificationsEnabled = options?.Value.Enabled ?? true;
+        _branchContext = branchContext;
     }
 
     public MongoLoanStore(
@@ -34,8 +37,9 @@ public sealed class MongoLoanStore : ILoanStore
 
     public async Task<LoanSearchEntry?> FindDetailAsync(string id, CancellationToken token)
     {
+        var branch = await StaffBranchAsync(token);
         var loan = await FindLoanAsync(id, token);
-        if (loan is null) return null;
+        if (loan is null || (branch is not null && loan.MediaType != MediaTypes.Digital && loan.BranchId != branch)) return null;
         var book = ObjectId.TryParse(loan.BookId, out _) ? await _books.Find(b => b.Id == loan.BookId).Project(b => new { b.Title, b.CoverUrl }).FirstOrDefaultAsync(token) : null;
         var user = ObjectId.TryParse(loan.UserId, out _) ? await _users.Find(u => u.Id == loan.UserId).Project(u => new { u.Username, u.DisplayName, u.AvatarUrl }).FirstOrDefaultAsync(token) : null;
         return new(loan, book?.Title, user?.Username, user?.DisplayName, book?.CoverUrl, user?.AvatarUrl);
@@ -55,6 +59,10 @@ public sealed class MongoLoanStore : ILoanStore
     }
 
     private static string? SafeActor(string? actor) => string.IsNullOrWhiteSpace(actor) ? null : new string(actor.Where(c => !char.IsControl(c)).Take(100).ToArray());
+
+    private Task<string?> StaffBranchAsync(CancellationToken ct) => _branchContext?.IsStaff == true
+        ? BranchRequestContext.ResolveAsync(new MongoDBService(_loans.Database), _branchContext, ct)
+        : Task.FromResult<string?>(null);
 
     public async Task<Book?> FindActiveBookAsync(string bookId, CancellationToken token)
     {
@@ -93,6 +101,14 @@ public sealed class MongoLoanStore : ILoanStore
         using var session = await _books.Database.Client.StartSessionAsync(cancellationToken: token);
         await session.WithTransactionAsync(async (transaction, ct) =>
         {
+            var mongo = new MongoDBService(_books.Database);
+            var branch = await BranchRequestContext.ResolveAsync(mongo, _branchContext, ct);
+            if (branch is not null)
+            {
+                await new BranchAccessService(mongo).TouchActiveAsync(transaction, branch, ct);
+                if (!await _books.Database.GetCollection<BranchCatalogEntry>("BranchCatalog").Find(transaction, e => e.BranchId == branch && e.BookId == loan.BookId && e.IsActive).AnyAsync(ct)) throw new BookReferenceUnavailableException();
+                if (loan.MediaType != MediaTypes.Digital) loan.BranchId = branch;
+            }
             var b = Builders<Book>.Filter;
             var media = loan.MediaType == MediaTypes.Digital ? b.Eq(x => x.MediaType, MediaTypes.Digital)
                 : b.Eq(x => x.MediaType, MediaTypes.Physical) | b.Exists(x => x.MediaType, false);
@@ -185,6 +201,7 @@ public sealed class MongoLoanStore : ILoanStore
 
     public async Task<PagedResult<Loan>> SearchAsync(NormalizedLoanQuery query, CancellationToken token)
     {
+        var branch = await StaffBranchAsync(token);
         // Compute the same read-time values as LoanResponse.From before filtering,
         // sorting and counting. Keep persisted fields untouched for deserialization.
         var pipeline = new List<BsonDocument>
@@ -214,6 +231,7 @@ public sealed class MongoLoanStore : ILoanStore
             """)
         };
         var filters = new BsonArray();
+        if (branch is not null) filters.Add(new BsonDocument("$or", new BsonArray { new BsonDocument("BranchId", branch), new BsonDocument("MediaType", MediaTypes.Digital) }));
         if (query.Status == "outstanding") filters.Add(new BsonDocument("_status", new BsonDocument("$in", new BsonArray { "active", "overdue" })));
         else if (query.Status is not null) filters.Add(new BsonDocument("_status", query.Status));
         if (query.MediaType is not null) filters.Add(new BsonDocument("_mediaType", query.MediaType));

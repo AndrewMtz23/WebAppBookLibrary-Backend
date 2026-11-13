@@ -26,13 +26,23 @@ internal sealed class CopyContext(MongoDBService mongo, TimeProvider clock)
                 var user=await mongo.Users.Find(tx,u=>u.Id==actor.UserId && u.IsActive).FirstOrDefaultAsync(token);
                 if(user is null || user.Role is not ("admin" or "librarian")) throw new CopyConflict("copy_forbidden");
                 await UserReferenceGuard.TouchAsync(mongo.Users,tx,user.Id,token);
+                if(actor.BranchId is not null)
+                    await new Branches.BranchAccessService(mongo).ValidateForMutationAsync(tx, actor.UserId, actor.BranchId, token);
                 return await action(tx,user,token);
             },new TransactionOptions(readConcern:ReadConcern.Snapshot,writeConcern:WriteConcern.WMajority),ct);
         }
         catch(CopyConflict ex) { return new(false,ex.Message); }
+        catch(Branches.BranchAccessException ex) { return new(false,ex.Code); }
         catch(UserReferenceUnavailableException) { return new(false,"copy_forbidden"); }
         catch(MongoException ex) when(ex is MongoWriteException { WriteError.Category: ServerErrorCategory.DuplicateKey } || ex is MongoCommandException { Code:11000 })
         { return new(false,"copy_duplicate"); }
+    }
+
+    internal static void ValidateBranch(BookCopy copy, CopyActor actor)
+    {
+        if(copy.BranchId is null && actor.BranchId is null) return;
+        if(actor.BranchId is null) throw new CopyConflict("branch_required");
+        if(copy.BranchId != actor.BranchId) throw new CopyConflict("copy_not_found");
     }
 
     internal async Task<Book> LockBookAsync(IClientSessionHandle tx,string bookId,CancellationToken ct)
@@ -57,6 +67,6 @@ internal sealed class CopyContext(MongoDBService mongo, TimeProvider clock)
     }
 
     internal Task AuditAsync(IClientSessionHandle tx,BookCopy copy,string action,string? from,string? actor,string? reason,CancellationToken ct)
-        => History.InsertOneAsync(tx,new CopyHistoryEntry { Id=ObjectId.GenerateNewId().ToString(),CopyId=copy.Id,BookId=copy.BookId,
+        => History.InsertOneAsync(tx,new CopyHistoryEntry { Id=ObjectId.GenerateNewId().ToString(),CopyId=copy.Id,BookId=copy.BookId,BranchId=copy.BranchId,
             Action=action,FromStatus=from,ToStatus=copy.Status,ActorId=actor,Reason=reason,CreatedAt=Now },cancellationToken:ct);
 }

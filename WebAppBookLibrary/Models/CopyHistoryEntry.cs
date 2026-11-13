@@ -9,6 +9,7 @@ public sealed class CopyHistoryEntry
     public string Id { get; set; } = string.Empty;
     public string CopyId { get; set; } = string.Empty;
     public string BookId { get; set; } = string.Empty;
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull] public string? BranchId { get; set; }
     public string Action { get; set; } = string.Empty;
     public string? FromStatus { get; set; }
     public string ToStatus { get; set; } = string.Empty;

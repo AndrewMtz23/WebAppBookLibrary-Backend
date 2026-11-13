@@ -13,7 +13,7 @@ namespace WebAppBookLibrary.Controllers;
 [ApiController, Authorize(Policy=PolicyNames.ManageCopies)]
 public sealed class CopiesController(CopyStore store,CopyQueries queries,CopyTransitions transitions,MongoDBService mongo):ControllerBase
 {
-    private CopyActor Actor=>new(User.FindFirstValue(ClaimTypes.NameIdentifier)??"",User.IsInRole("admin"));
+    private CopyActor Actor=>new(User.FindFirstValue(ClaimTypes.NameIdentifier)??"",User.IsInRole("admin"),Request.Headers["X-Branch-Id"].ToString() is {Length:>0} branch ? branch : null);
     private Task<bool> Active(CancellationToken ct)=>mongo.Users.Find(u=>u.Id==Actor.UserId&&u.IsActive&&(u.Role=="admin"||u.Role=="librarian")).AnyAsync(ct);
     private IActionResult Error(string code,int status)
     {
@@ -21,7 +21,7 @@ public sealed class CopiesController(CopyStore store,CopyQueries queries,CopyTra
         return new ObjectResult(problem){StatusCode=status,ContentTypes={"application/problem+json"}};
     }
     private IActionResult Result(CopyMutationResult result)=>result.Success?Ok(CopyResponse.From(result.Copy!)):Error(result.ErrorCode!,result.ErrorCode switch{
-        "copy_forbidden"=>403,"copy_not_found" or "book_not_found"=>404,"copy_invalid"=>400,_=>409});
+        "copy_forbidden" or "branch_forbidden"=>403,"copy_not_found" or "book_not_found"=>404,"copy_invalid" or "branch_required"=>400,_=>409});
     private static bool Page(int page,int size)=>page is >=1 and <=1000000 && size is >=1 and <=100;
 
     [HttpGet("api/books/{bookId}/copies")]
@@ -46,6 +46,13 @@ public sealed class CopiesController(CopyStore store,CopyQueries queries,CopyTra
         if(!await Active(ct))return Error("copy_forbidden",403);
         if(!ObjectId.TryParse(id,out _))return Error("copy_invalid",400);
         var copy=await queries.GetAsync(id,ct);return copy is null?Error("copy_not_found",404):Ok(copy);
+    }
+    [HttpGet("api/copies/{id}/context")]
+    public async Task<IActionResult> Origin(string id, CancellationToken ct)
+    {
+        if (!await Active(ct)) return Error("copy_forbidden", 403);
+        var origin = await queries.ResolveOriginAsync(id, Actor.UserId, ct);
+        return origin is null ? Error("copy_not_found", 404) : Ok(origin);
     }
     [HttpPut("api/copies/{id}")]
     public async Task<IActionResult> Update(string id,UpdateCopyRequest request,CancellationToken ct)=>Result(await store.UpdateAsync(id,request,Actor,ct));

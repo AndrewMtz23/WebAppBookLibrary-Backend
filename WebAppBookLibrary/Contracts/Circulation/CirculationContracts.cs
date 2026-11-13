@@ -23,7 +23,7 @@ public sealed record WaitlistEntryResponse(
     DateTime CreatedAt,
     int? QueuePosition,
     DateTime? OfferExpiresAt,
-    string? PickupReservationId
+    string? PickupReservationId, string? BranchId = null, string? BranchName = null
 );
 
 public sealed record MyWaitlistResponse(
@@ -52,7 +52,7 @@ public sealed record PickupReservationResponse(
     string? CancelledReason,
     string? LoanId,
     long Version,
-    string? CopyId = null
+    string? CopyId = null, string? BranchId = null, string? BranchName = null
 );
 
 public sealed record CollectPickupRequest(
@@ -92,7 +92,7 @@ public sealed record RenewalRequestResponse(
     DateTime? DecidedAt,
     string? DecidedByUserId,
     string? DecisionReason,
-    long Version
+    long Version, string? BranchId = null, string? BranchName = null
 );
 
 public sealed record DecideRenewalRequest(

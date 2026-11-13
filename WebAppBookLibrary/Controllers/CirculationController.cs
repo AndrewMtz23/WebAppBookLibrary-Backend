@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using WebAppBookLibrary.Contracts.Circulation;
 using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Services;
+using WebAppBookLibrary.Services.Branches;
 
 namespace WebAppBookLibrary.Controllers;
 
@@ -44,7 +45,8 @@ public sealed class CirculationController(ICirculationStore store, MongoDBServic
     {
         if (!await Active(ct)) return Error("invalid_user", 401);
         if (!Id(id)) return Error("invalid_identifier", 400);
-        if (!await db.CirculationHistory.Find(h => h.EntityId == id && (Staff || h.UserId == Actor)).AnyAsync(ct)) return Error("history_not_found", 404);
+        var branch = Staff ? await BranchRequestContext.ResolveAsync(db, BranchRequestContext.From(HttpContext), ct) : null;
+        if (!await db.CirculationHistory.Find(h => h.EntityId == id && (Staff || h.UserId == Actor) && (branch == null || h.BranchId == branch)).AnyAsync(ct)) return Error("history_not_found", 404);
         return Ok(await store.GetHistoryAsync(id, ct));
     }
 
@@ -52,12 +54,13 @@ public sealed class CirculationController(ICirculationStore store, MongoDBServic
     public async Task<IActionResult> Summary(CancellationToken ct)
     {
         if (!await Active(ct)) return Error("invalid_user", 401);
+        var branch = await BranchRequestContext.ResolveAsync(db, BranchRequestContext.From(HttpContext), ct);
         using var session = await db._database.Client.StartSessionAsync(cancellationToken: ct);
         var summary = await session.WithTransactionAsync(async (tx, token) => new {
-            ready = await db.PickupReservations.CountDocumentsAsync(tx, p => p.Status == "ready", cancellationToken: token),
-            queued = await db.WaitlistEntries.CountDocumentsAsync(tx, w => w.Status == "queued", cancellationToken: token),
-            loaned = await db.Loans.CountDocumentsAsync(tx, l => l.PolicyVersion == "circulation-v1" && (l.Status == "active" || l.Status == "overdue"), cancellationToken: token),
-            pendingRenewals = await db.RenewalRequests.CountDocumentsAsync(tx, r => r.Status == "pending", cancellationToken: token)
+            ready = await db.PickupReservations.CountDocumentsAsync(tx, p => p.Status == "ready" && (branch == null || p.BranchId == branch), cancellationToken: token),
+            queued = await db.WaitlistEntries.CountDocumentsAsync(tx, w => w.Status == "queued" && (branch == null || w.BranchId == branch), cancellationToken: token),
+            loaned = await db.Loans.CountDocumentsAsync(tx, l => l.PolicyVersion == "circulation-v1" && (l.Status == "active" || l.Status == "overdue") && (branch == null || l.BranchId == branch), cancellationToken: token),
+            pendingRenewals = await db.RenewalRequests.CountDocumentsAsync(tx, r => r.Status == "pending" && (branch == null || r.BranchId == branch), cancellationToken: token)
         }, cancellationToken: ct);
         return Ok(summary);
     }

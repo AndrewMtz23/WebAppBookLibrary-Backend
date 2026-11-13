@@ -11,7 +11,7 @@ public static class NotificationEvents
         var key = loan.Id + ":" + type + (type.StartsWith("due_") ? ":" + loan.DueAt?.Ticks : "");
         var title = type switch { "reserved" => "Reserva confirmada", "returned" => "Devolución confirmada", "cancelled" => "Reserva cancelada", "due_overdue" => "Tu préstamo ha vencido", _ => "Tu préstamo vence pronto" };
         var body = type switch { "reserved" => "Tu libro ya está reservado.", "returned" => "Registramos la devolución de tu libro.", "cancelled" => "Tu reserva se canceló correctamente.", _ => "Revisa la fecha de devolución de tu préstamo físico." };
-        await AppendEventAsync(db, tx, loan.UserId, key, type, title, body, loan.BookId, loan.Id, loan.DueAt, now, ct);
+        await AppendEventAsync(db, tx, loan.UserId, key, type, title, body, loan.BookId, loan.Id, loan.DueAt, now, ct, branchId: loan.BranchId);
     }
 
     public static async Task AppendEventAsync(
@@ -26,10 +26,15 @@ public static class NotificationEvents
         string? loanId,
         DateTime? dueAt,
         DateTime now,
-        CancellationToken ct, string targetType = "book")
+        CancellationToken ct, string targetType = "book", string? branchId = null)
     {
         var notices = db.GetCollection<Notification>("Notifications");
         if (await notices.Find(tx, n => n.UserId == userId && n.EventKey == eventKey).AnyAsync(ct)) return;
+        if (branchId is not null)
+        {
+            var branch = await db.GetCollection<Branch>("Branches").Find(tx, b => b.Id == branchId).FirstOrDefaultAsync(ct);
+            if (branch is not null) body += " Sucursal: " + branch.Name + ".";
+        }
         var preferences = db.GetCollection<NotificationPreferences>("NotificationPreferences");
         var prefs = await preferences.FindOneAndUpdateAsync<NotificationPreferences>(tx, p => p.Id == userId,
             Builders<NotificationPreferences>.Update.Inc(p => p.Sequence, 1).SetOnInsert(p => p.Reminders, true).SetOnInsert(p => p.Email, false),
@@ -37,7 +42,7 @@ public static class NotificationEvents
         if (type.StartsWith("due_") && !prefs.Reminders) return;
         var notice = new Notification { UserId = userId, Sequence = prefs.Sequence, EventKey = eventKey, Type = type, LoanId = loanId ?? "",
             TargetType = targetType, TargetId = targetId ?? "", DueAt = dueAt, CreatedAt = now,
-            Title = title, Body = body };
+            Title = title, Body = body, BranchId = branchId };
         await notices.InsertOneAsync(tx, notice, cancellationToken: ct);
         if (prefs.Email)
             await db.GetCollection<AccountMailJob>("AccountMailOutbox").InsertOneAsync(tx,

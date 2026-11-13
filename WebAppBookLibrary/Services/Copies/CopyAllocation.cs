@@ -8,12 +8,12 @@ internal sealed class CopyAllocation(MongoDBService mongo,TimeProvider clock)
 {
     private readonly CopyContext context=new(mongo,clock);
 
-    internal async Task<BookCopy?> HoldAsync(IClientSessionHandle tx,string bookId,string pickupId,CancellationToken ct)
+    internal async Task<BookCopy?> HoldAsync(IClientSessionHandle tx,string bookId,string pickupId,CancellationToken ct,string? branchId=null)
     {
         var book=await mongo.Books.Find(tx,b=>b.Id==bookId).FirstOrDefaultAsync(ct);
         if(book?.InventoryMode!="unit")return null;
         await context.LockBookAsync(tx,bookId,ct);
-        var copy=await context.Copies.Find(tx,c=>c.BookId==bookId&&c.Status=="available"&&!c.InspectionPending&&(c.Condition=="good"||c.Condition=="worn")&&c.ActiveAssignmentId==null)
+        var copy=await context.Copies.Find(tx,c=>c.BookId==bookId&&c.BranchId==branchId&&c.Status=="available"&&!c.InspectionPending&&(c.Condition=="good"||c.Condition=="worn")&&c.ActiveAssignmentId==null)
             .SortBy(c=>c.InventoryCode).FirstOrDefaultAsync(ct);
         if(copy is null)throw new CopyConflict("inventory_reconciliation_required");
         copy.Status="held";copy.ActiveAssignmentType="pickup";copy.ActiveAssignmentId=pickupId;copy.Version++;copy.UpdatedAt=context.Now;
@@ -43,7 +43,7 @@ internal sealed class CopyAllocation(MongoDBService mongo,TimeProvider clock)
         var pickups=await mongo.PickupReservations.Find(tx,p=>p.BookId==book.Id&&p.Status=="ready").ToListAsync(ct);
         var loans=await mongo.Loans.Find(tx,l=>l.BookId==book.Id&&(l.Status=="active"||l.Status=="overdue"||((l.Status==""||l.Status==null)&&!l.IsReturned))).ToListAsync(ct);
         return pickups.Count==copies.Count(c=>c.Status=="held")&&loans.Count==copies.Count(c=>c.Status=="loaned")
-            &&pickups.All(p=>copies.Any(c=>c.Id==p.CopyId&&c.Status=="held"&&c.ActiveAssignmentType=="pickup"&&c.ActiveAssignmentId==p.Id))
-            &&loans.All(l=>copies.Any(c=>c.Id==l.CopyId&&c.Status=="loaned"&&c.ActiveAssignmentType=="loan"&&c.ActiveAssignmentId==l.Id));
+            &&pickups.All(p=>copies.Any(c=>c.Id==p.CopyId&&c.BranchId==p.BranchId&&c.Status=="held"&&c.ActiveAssignmentType=="pickup"&&c.ActiveAssignmentId==p.Id))
+            &&loans.All(l=>copies.Any(c=>c.Id==l.CopyId&&c.BranchId==l.BranchId&&c.Status=="loaned"&&c.ActiveAssignmentType=="loan"&&c.ActiveAssignmentId==l.Id));
     }
 }

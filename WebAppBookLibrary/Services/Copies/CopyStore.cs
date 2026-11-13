@@ -21,16 +21,19 @@ public sealed class CopyStore(MongoDBService mongo,TimeProvider clock)
             || request.Location?.Length>200 || string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Length>100)
             return Task.FromResult(new CopyMutationResult(false,"copy_invalid"));
         var key=actor.UserId+":"+request.IdempotencyKey;
-        var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{bookId,code,request.Condition,request.Location,request.Notes}))));
+        var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{bookId,code,request.Condition,request.Location,request.Notes,actor.BranchId}))));
         return context.Transact(actor,async(tx,user,token)=>
         {
             var prior=await context.Copies.Find(tx,c=>c.CreationKey==key).FirstOrDefaultAsync(token);
             if(prior is not null) return prior.CreationFingerprint==fingerprint ? new(true,null,prior,true) : new(false,"idempotency_conflict");
             var book=await context.LockBookAsync(tx,bookId,token);
+            if(book.InventoryBranchId is not null && actor.BranchId is null) throw new CopyConflict("branch_required");
+            if(actor.BranchId is not null && !await mongo._database.GetCollection<BranchCatalogEntry>("BranchCatalog").Find(tx,e=>e.BookId==bookId&&e.BranchId==actor.BranchId&&e.IsActive).AnyAsync(token))
+                throw new CopyConflict("book_not_found");
             if(!book.IsActive) throw new CopyConflict("book_inactive");
             if(!await new CopyAllocation(mongo,clock).ConsistentAsync(tx,book,token))
                 throw new CopyConflict("inventory_reconciliation_required");
-            var copy=new BookCopy { Id=ObjectId.GenerateNewId().ToString(),BookId=bookId,InventoryCode=code,Condition=request.Condition,
+            var copy=new BookCopy { Id=ObjectId.GenerateNewId().ToString(),BookId=bookId,BranchId=actor.BranchId,InventoryCode=code,Condition=request.Condition,
                 Status=request.Condition=="damaged"?"maintenance":"available",InspectionPending=false,Location=request.Location,Notes=request.Notes,
                 CreationKey=key,CreationFingerprint=fingerprint,CreatedAt=context.Now,UpdatedAt=context.Now };
             await context.Copies.InsertOneAsync(tx,copy,cancellationToken:token);
@@ -48,6 +51,7 @@ public sealed class CopyStore(MongoDBService mongo,TimeProvider clock)
         {
             var copy=await context.Copies.Find(tx,c=>c.Id==id).FirstOrDefaultAsync(token);
             if(copy is null) throw new CopyConflict("copy_not_found");
+            CopyContext.ValidateBranch(copy,actor);
             if(copy.Version!=request.ExpectedVersion) throw new CopyConflict("version_conflict");
             await context.LockBookAsync(tx,copy.BookId,token);
             copy.Location=request.Location;copy.Notes=request.Notes;copy.Version++;copy.UpdatedAt=context.Now;

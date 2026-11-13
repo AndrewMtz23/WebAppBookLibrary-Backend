@@ -21,16 +21,19 @@ public sealed class CopyTransitions(MongoDBService mongo,TimeProvider clock,IOpt
             ||request.ExpectedVersion<1||string.IsNullOrWhiteSpace(request.IdempotencyKey)||request.IdempotencyKey.Length>100)
             return Task.FromResult(new CopyMutationResult(false,"copy_invalid"));
         var key=actor.UserId+":"+request.IdempotencyKey;
-        var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{copyId,request}))));
+        var fingerprint=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{copyId,request,actor.BranchId}))));
         return context.Transact(actor,async(tx,user,token)=>
         {
             var prior=await context.History.Find(tx,h=>h.OperationKey==key).FirstOrDefaultAsync(token);
             if(prior is not null)
             {
                 if(prior.OperationFingerprint!=fingerprint)throw new CopyConflict("idempotency_conflict");
-                return new(true,null,await context.Copies.Find(tx,c=>c.Id==copyId).SingleAsync(token),true);
+                var priorCopy=await context.Copies.Find(tx,c=>c.Id==copyId).SingleAsync(token);
+                CopyContext.ValidateBranch(priorCopy,actor);
+                return new(true,null,priorCopy,true);
             }
             var copy=await ReadAsync(tx,copyId,request.ExpectedVersion,token);
+            CopyContext.ValidateBranch(copy,actor);
             if(request.Status=="retired"&&user.Role!="admin")throw new CopyConflict("copy_forbidden");
             var resolvesLoss=request.Status=="lost"&&copy.Status is "held" or "loaned";
             if(!resolvesLoss&&!CopyRules.CanTransition(copy.Status,request.Status,user.Role=="admin"))throw new CopyConflict("copy_transition_invalid");
@@ -55,6 +58,7 @@ public sealed class CopyTransitions(MongoDBService mongo,TimeProvider clock,IOpt
         return context.Transact(actor,async(tx,user,token)=>
         {
             var copy=await ReadAsync(tx,copyId,expectedVersion,token);
+            CopyContext.ValidateBranch(copy,actor);
             if(copy.Status is "loaned" or "lost" or "retired")throw new CopyConflict("copy_transition_invalid");
             var from=copy.Status;
             if(copy.Status=="held"&&inspection.Condition=="damaged")await CloseCommitmentAsync(tx,copy,user.Id,"Damaged during inspection",token);

@@ -12,6 +12,7 @@ namespace WebAppBookLibrary.Models
         public string Id { get; set; } = string.Empty;
 
         public string BookId { get; set; } = string.Empty;
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull] public string? BranchId { get; set; }
         [BsonIgnoreIfNull]
         public string? CopyId { get; set; }
         [BsonIgnoreIfNull]

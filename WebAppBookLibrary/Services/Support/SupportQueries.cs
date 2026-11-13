@@ -9,7 +9,7 @@ using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Services.Support;
 
-public sealed class SupportQueries(MongoDBService mongo, IOptions<SupportOptions>? options = null)
+public sealed class SupportQueries(MongoDBService mongo, IOptions<SupportOptions>? options = null, Branches.BranchRequestContext? branchContext = null)
 {
     private IMongoCollection<SupportTicket> Tickets => mongo._database.GetCollection<SupportTicket>("SupportTickets");
     internal async Task<User?> ActorAsync(string id, CancellationToken ct) => ObjectId.TryParse(id, out _) ? await mongo.Users.Find(u => u.Id == id && u.IsActive).FirstOrDefaultAsync(ct) : null;
@@ -24,6 +24,8 @@ public sealed class SupportQueries(MongoDBService mongo, IOptions<SupportOptions
             return SupportResult<PagedResult<SupportTicketSummary>>.Fail(400, "support_query_invalid");
         var f = Builders<SupportTicket>.Filter;
         var filter = !staff ? f.Eq(t => t.RequesterId, actorId) : actor.Role == "librarian" ? f.In(t => t.Category, new[] { "loan", "catalog" }) : f.Empty;
+        if (staff && actor.Role == "librarian" && await Branches.BranchRequestContext.EnabledAsync(mongo._database, ct))
+            filter &= f.Eq(t => t.BranchId, await Branches.BranchRequestContext.ResolveAsync(mongo, branchContext, ct));
         if (query.Status != null) filter &= f.Eq(t => t.Status, query.Status);
         if (query.Category != null) filter &= f.Eq(t => t.Category, query.Category);
         var total = await Tickets.CountDocumentsAsync(filter, cancellationToken: ct);
@@ -54,6 +56,8 @@ public sealed class SupportQueries(MongoDBService mongo, IOptions<SupportOptions
         if (!ValidPage(page, pageSize)) return SupportResult<StaffSupportDetail>.Fail(400, "support_query_invalid");
         var ticket = ObjectId.TryParse(id, out _) ? await Tickets.Find(t => t.Id == id).FirstOrDefaultAsync(ct) : null;
         if (ticket == null || !SupportRules.CanAttend(actor.Role, ticket.Category)) return SupportResult<StaffSupportDetail>.Fail(404, "support_not_found");
+        if (actor.Role == "librarian" && await Branches.BranchRequestContext.EnabledAsync(mongo._database, ct) && ticket.BranchId != await Branches.BranchRequestContext.ResolveAsync(mongo, branchContext, ct))
+            return SupportResult<StaffSupportDetail>.Fail(404, "support_not_found");
         var notes = mongo._database.GetCollection<SupportInternalNote>("SupportInternalNotes");
         var history = mongo._database.GetCollection<SupportHistory>("SupportHistory");
         var noteRows = await notes.Find(n => n.TicketId == id).SortBy(n => n.CreatedAt).ThenBy(n => n.Id).Skip((page - 1) * pageSize).Limit(pageSize).ToListAsync(ct);
