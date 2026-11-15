@@ -53,6 +53,7 @@ namespace WebAppBookLibrary.Services
 
         public async Task CreateIndexesAsync()
         {
+            await Branches.BranchIndexes.CreateAsync(_database);
             await NotificationEvents.CreateIndexesAsync(_database);
             await Support.SupportIndexes.CreateAsync(_database);
             await Reviews.ReviewIndexes.CreateAsync(_database);

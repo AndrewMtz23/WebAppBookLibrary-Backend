@@ -9,7 +9,7 @@ using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Services.Support;
 
-public sealed class MongoSupportStore(MongoDBService mongo, IOptions<SupportOptions> options, TimeProvider clock)
+public sealed class MongoSupportStore(MongoDBService mongo, IOptions<SupportOptions> options, TimeProvider clock, Branches.BranchRequestContext? branchContext = null)
 {
     private IMongoCollection<SupportTicket> Tickets => mongo._database.GetCollection<SupportTicket>("SupportTickets");
     private IMongoCollection<SupportReply> Replies => mongo._database.GetCollection<SupportReply>("SupportReplies");
@@ -38,23 +38,28 @@ public sealed class MongoSupportStore(MongoDBService mongo, IOptions<SupportOpti
     }
 
     public Task<SupportResult<SupportTicketDetail>> CreateAsync(string actorId, CreateSupportTicket request, CancellationToken ct) => TransactAsync<SupportTicketDetail>(actorId, async (tx, actor, token) => {
+        var branch = request.Category is "loan" or "catalog" ? await Branches.BranchRequestContext.ResolveAsync(mongo, branchContext, token) : null;
+        if (branch is not null) await new Branches.BranchAccessService(mongo).TouchActiveAsync(tx, branch, token);
         if (!SupportRules.ValidCategory(request.Category) || !SupportRules.ValidText(request.Subject, 160) || !SupportRules.ValidText(request.Description, 4000) || !Guid.TryParse(request.IdempotencyKey, out var key) ||
             request.BookId != null && !ObjectId.TryParse(request.BookId, out _) || request.LoanId != null && !ObjectId.TryParse(request.LoanId, out _))
             return SupportResult<SupportTicketDetail>.Fail(400, "support_input_invalid");
         var canonicalKey = key.ToString();
         var existing = await Tickets.Find(tx, t => t.RequesterId == actorId && t.IdempotencyKey == canonicalKey).FirstOrDefaultAsync(token);
         if (existing != null)
-            return existing.Subject == request.Subject.Trim() && existing.Description == request.Description.Trim() && existing.Category == request.Category && existing.BookId == request.BookId && existing.LoanId == request.LoanId
+            return existing.BranchId == branch && existing.Subject == request.Subject.Trim() && existing.Description == request.Description.Trim() && existing.Category == request.Category && existing.BookId == request.BookId && existing.LoanId == request.LoanId
                 ? new(ToDetail(existing)) : SupportResult<SupportTicketDetail>.Fail(409, "support_idempotency_conflict");
         if (!Options.AcceptNewTickets) return SupportResult<SupportTicketDetail>.Fail(409, "support_intake_disabled");
         if (request.BookId != null && !await mongo.Books.Find(tx, b => b.Id == request.BookId && b.IsActive).AnyAsync(token)) return SupportResult<SupportTicketDetail>.Fail(404, "support_reference_unavailable");
         if (request.LoanId != null && !await mongo.Loans.Find(tx, l => l.Id == request.LoanId && l.UserId == actorId && (request.BookId == null || l.BookId == request.BookId)).AnyAsync(token)) return SupportResult<SupportTicketDetail>.Fail(404, "support_reference_unavailable");
+        if (branch is not null && request.BookId is not null && !await mongo._database.GetCollection<BranchCatalogEntry>("BranchCatalog").Find(tx, e => e.BranchId == branch && e.BookId == request.BookId && e.IsActive).AnyAsync(token)) return SupportResult<SupportTicketDetail>.Fail(404, "support_reference_unavailable");
+        if (branch is not null && request.LoanId is not null && !await mongo.Loans.Find(tx, l => l.Id == request.LoanId && (l.BranchId == branch || l.MediaType == "digital") && l.UserId == actorId).AnyAsync(token)) return SupportResult<SupportTicketDetail>.Fail(404, "support_reference_unavailable");
         var now = Now; var since = now.AddHours(-1);
         if (await Tickets.CountDocumentsAsync(tx, t => t.RequesterId == actorId && (t.Status == "open" || t.Status == "in_progress"), cancellationToken: token) >= Options.MaxOpenTickets)
             return SupportResult<SupportTicketDetail>.Fail(429, "support_open_limit", 3600);
         if (await Tickets.CountDocumentsAsync(tx, t => t.RequesterId == actorId && t.CreatedAt > since, cancellationToken: token) >= Options.CreatesPerHour)
             return SupportResult<SupportTicketDetail>.Fail(429, "support_rate_limit", 3600);
         var ticket = new SupportTicket { RequesterId = actorId, Category = request.Category, Subject = request.Subject.Trim(), Description = request.Description.Trim(), BookId = request.BookId, LoanId = request.LoanId, IdempotencyKey = canonicalKey, CreatedAt = now, UpdatedAt = now };
+        ticket.BranchId = branch;
         await Tickets.InsertOneAsync(tx, ticket, cancellationToken: token);
         await History.InsertOneAsync(tx, new() { TicketId = ticket.Id, ActorId = actorId, Action = "created", ToStatus = "open", CreatedAt = now }, cancellationToken: token);
         return new(ToDetail(ticket));
@@ -103,6 +108,8 @@ public sealed class MongoSupportStore(MongoDBService mongo, IOptions<SupportOpti
             {
                 var assignee = ObjectId.TryParse(request.AssigneeId, out _) ? await mongo.Users.Find(tx, u => u.Id == request.AssigneeId && u.IsActive).FirstOrDefaultAsync(token) : null;
                 if (assignee == null || !SupportRules.CanAttend(assignee.Role, ticket.Category)) return SupportResult<long>.Fail(404, "support_assignee_unavailable");
+                if (assignee.Role == "librarian" && ticket.BranchId is not null)
+                    await new Branches.BranchAccessService(mongo).ValidateForMutationAsync(tx, assignee.Id, ticket.BranchId, token);
                 await UserReferenceGuard.TouchAsync(mongo.Users, tx, assignee.Id, token);
             }
             ticket.AssigneeId = request.AssigneeId;
@@ -115,6 +122,12 @@ public sealed class MongoSupportStore(MongoDBService mongo, IOptions<SupportOpti
             if (staff && actor.Role is not ("admin" or "librarian")) return SupportResult<long>.Fail(403, "support_staff_required");
             var ticket = ObjectId.TryParse(id, out _) ? await Tickets.Find(tx, t => t.Id == id).FirstOrDefaultAsync(token) : null;
             if (ticket == null || (staff ? !SupportRules.CanAttend(actor.Role, ticket.Category) : ticket.RequesterId != actorId)) return SupportResult<long>.Fail(404, "support_not_found");
+            if (staff && actor.Role == "librarian" && await Branches.BranchRequestContext.EnabledAsync(mongo._database, token))
+            {
+                var branch = await Branches.BranchRequestContext.ResolveAsync(mongo, branchContext, token);
+                if (ticket.BranchId != branch) return SupportResult<long>.Fail(404, "support_not_found");
+                await new Branches.BranchAccessService(mongo).ValidateForMutationAsync(tx, actorId, branch!, token);
+            }
             if (version <= 0) return SupportResult<long>.Fail(400, "support_version_required");
             if (ticket.Version != version) return SupportResult<long>.Fail(409, "support_conflict");
             // Existing tickets remain serviceable when their requester is inactive.

@@ -4,7 +4,7 @@ using WebAppBookLibrary.Models;
 
 namespace WebAppBookLibrary.Services;
 
-public sealed record NotificationResponse(string Id, string Type, string Title, string Body, string TargetType, string TargetId, DateTime CreatedAt, DateTime? ReadAt, DateTime? DueAt);
+public sealed record NotificationResponse(string Id, string Type, string Title, string Body, string TargetType, string TargetId, DateTime CreatedAt, DateTime? ReadAt, DateTime? DueAt, string? BranchId = null);
 public sealed record NotificationPage(IReadOnlyList<NotificationResponse> Items, long? NextCursor, long ReadThrough, long UnreadCount);
 public sealed record NotificationPreferencesResponse(bool Reminders, bool Email, bool EmailVerified);
 public sealed record SaveNotificationPreferences(bool Reminders, bool Email);
@@ -26,7 +26,7 @@ public sealed class NotificationService(MongoDBService mongo, TimeProvider clock
         if (before.HasValue) filter &= f.Lt(n => n.Sequence, before.Value);
         if (read.HasValue) filter &= read.Value ? f.Ne(n => n.ReadAt, null) : f.Eq(n => n.ReadAt, null);
         var rows = await Notices.Find(filter).SortByDescending(n => n.Sequence).Limit(size + 1).ToListAsync(ct);
-        return new(rows.Take(size).Select(n => new NotificationResponse(n.Id, n.Type, n.Title, n.Body, n.TargetType, n.TargetId, n.CreatedAt, n.ReadAt, n.DueAt)).ToArray(),
+        return new(rows.Take(size).Select(n => new NotificationResponse(n.Id, n.Type, n.Title, n.Body, n.TargetType, n.TargetId, n.CreatedAt, n.ReadAt, n.DueAt, n.BranchId)).ToArray(),
             rows.Count > size ? rows[size - 1].Sequence : null, through, await UnreadCountAsync(userId, ct));
     }
 

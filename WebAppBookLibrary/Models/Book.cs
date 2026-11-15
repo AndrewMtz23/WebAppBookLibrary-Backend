@@ -12,6 +12,7 @@ public class Book
     public string Id { get; set; } = string.Empty;
 
     public string Title { get; set; } = string.Empty;
+    public long MetadataVersion { get; set; } = 1;
     public string? Subtitle { get; set; }
     public List<string> Authors { get; set; } = [];
     public string? Isbn { get; set; }
@@ -31,6 +32,7 @@ public class Book
     public int? AvailableCopies { get; set; }
     public int? RetainedCopies { get; set; } = 0;
     public string InventoryMode { get; set; } = "aggregate";
+    [BsonIgnoreIfNull] public string? InventoryBranchId { get; set; }
     [JsonIgnore] public long InventoryVersion { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

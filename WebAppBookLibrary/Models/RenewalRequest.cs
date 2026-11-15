@@ -18,6 +18,7 @@ public class RenewalRequest
     public string UserId { get; set; } = string.Empty;
 
     public string BookId { get; set; } = string.Empty;
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull] public string? BranchId { get; set; }
 
     public string Status { get; set; } = RenewalRequestStatuses.Pending;
 

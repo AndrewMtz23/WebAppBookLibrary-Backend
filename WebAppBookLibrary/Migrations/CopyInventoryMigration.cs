@@ -47,7 +47,7 @@ public sealed class CopyInventoryMigration(MongoDBService mongo,TimeProvider clo
                 for(var i=0;i<preview.Total;i++)
                 {
                     var code=$"MIG-{bookId}-{i+1:D6}".ToUpperInvariant();
-                    var copy=new BookCopy{Id=Hash(code)[..24].ToLowerInvariant(),BookId=bookId,InventoryCode=code,Status="maintenance",InspectionPending=true,
+                    var copy=new BookCopy{Id=Hash(code)[..24].ToLowerInvariant(),BookId=bookId,BranchId=snapshot.Book!.InventoryBranchId,InventoryCode=code,Status="maintenance",InspectionPending=true,
                         CreatedAt=context.Now,UpdatedAt=context.Now,ConversionId=preview.Fingerprint};
                     if(i<snapshot.Loans.Count)
                     {
@@ -95,6 +95,7 @@ public sealed class CopyInventoryMigration(MongoDBService mongo,TimeProvider clo
             foreach(var userId in loans.Select(l=>l.UserId).Concat(pickups.Select(p=>p.UserId)).Distinct())
                 if(!ObjectId.TryParse(userId,out _)||!await mongo.Users.Find(tx,u=>u.Id==userId).AnyAsync(ct))anomalies.Add("missing_account_reference");
             if(loans.Any(l=>l.MediaType=="digital"))anomalies.Add("digital_loan_on_physical_book");
+            if(loans.Any(l=>l.BranchId!=book?.InventoryBranchId)||pickups.Any(p=>p.BranchId!=book?.InventoryBranchId))anomalies.Add("commitment_branch_mismatch");
         }
         var fingerprint=Hash(JsonSerializer.Serialize(new{book,loans,pickups}));
         var preview=new CopyMigrationPreview(bookId,anomalies.Count==0,converted,book?.TotalCopies??0,book?.AvailableCopies??0,converted?book?.AvailableCopies??0:0,pickups.Count,loans.Count,fingerprint,anomalies);

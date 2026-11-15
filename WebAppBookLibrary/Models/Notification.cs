@@ -5,6 +5,7 @@ namespace WebAppBookLibrary.Models;
 
 public sealed class Notification
 {
+    public string? BranchId { get; set; }
     [BsonId, BsonRepresentation(BsonType.ObjectId)] public string Id { get; set; } = ObjectId.GenerateNewId().ToString();
     public string UserId { get; set; } = "";
     public long Sequence { get; set; }

@@ -7,6 +7,40 @@ namespace WebAppBookLibrary.Tests;
 public sealed class CopyMigrationTests
 {
     [LocalMongoFact]
+    public async Task Conversion_after_branch_activation_preserves_origin_with_and_without_commitments()
+    {
+        foreach (var commitments in new[] { false, true })
+            await StaffReviewRegressionTests.WithDatabase(async db => {
+                var f = await AdvancedCirculationTests.Seed(db, 3);
+                var admin = await SupportPersistenceTests.UserAsync(f.Db, "admin");
+                if (commitments)
+                {
+                    var pickup = (await f.Store.ReserveForPickupAsync(f.Reader.Id, f.Book.Id, "loan", default)).Reservation!;
+                    Assert.True((await f.Store.CollectPickupReservationAsync(pickup.Id, admin.Id, 1, default)).Success);
+                    var reader = await SupportPersistenceTests.UserAsync(f.Db, "user");
+                    Assert.True((await f.Store.ReserveForPickupAsync(reader.Id, f.Book.Id, "held", default)).Success);
+                }
+                var branches = new BranchMigration(f.Db, TimeProvider.System);
+                var input = new BranchMigrationInput("QA", "INITIAL", "Initial", "UTC");
+                var preview = await branches.PreviewAsync(input, default);
+                Assert.True(preview.Eligible, string.Join(", ", preview.Errors));
+                Assert.True((await branches.ApplyAsync(input, preview.Fingerprint, admin.Id, default)).Success);
+                var branch = await db.GetCollection<Branch>("Branches").Find(b => true).SingleAsync();
+                var migration = new CopyInventoryMigration(f.Db, TimeProvider.System);
+                var inventory = await migration.PreviewAsync(f.Book.Id, default);
+                Assert.True(inventory.Eligible);
+                Assert.True((await migration.ApplyAsync(f.Book.Id, inventory.Fingerprint, admin.Id, default)).Success);
+                var copies = await db.GetCollection<BookCopy>("BookCopies").Find(c => c.BookId == f.Book.Id).ToListAsync();
+                Assert.Equal(3, copies.Count);
+                Assert.All(copies, c => Assert.Equal(branch.Id, c.BranchId));
+                var history = await db.GetCollection<CopyHistoryEntry>("CopyHistory").Find(h => h.BookId == f.Book.Id).ToListAsync();
+                Assert.Equal(3, history.Count);
+                Assert.All(history, h => Assert.Equal(branch.Id, h.BranchId));
+                Assert.True((await migration.ApplyAsync(f.Book.Id, inventory.Fingerprint, admin.Id, default)).Success);
+            });
+    }
+
+    [LocalMongoFact]
     public Task Conversion_limit_is_atomic_and_rejects_larger_titles()=>StaffReviewRegressionTests.WithDatabase(async db=>{
         var f=await AdvancedCirculationTests.Seed(db,501);var admin=await SupportPersistenceTests.UserAsync(f.Db,"admin");
         var migration=new CopyInventoryMigration(f.Db,TimeProvider.System);

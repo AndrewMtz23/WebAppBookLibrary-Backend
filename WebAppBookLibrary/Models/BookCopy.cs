@@ -8,6 +8,7 @@ public sealed class BookCopy
     [BsonId, BsonRepresentation(BsonType.ObjectId)]
     public string Id { get; set; } = string.Empty;
     public string BookId { get; set; } = string.Empty;
+    [BsonIgnoreIfNull] public string? BranchId { get; set; }
     public string InventoryCode { get; set; } = string.Empty;
     public string Status { get; set; } = "maintenance";
     public string? Condition { get; set; }

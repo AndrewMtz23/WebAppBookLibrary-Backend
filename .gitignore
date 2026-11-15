@@ -69,3 +69,5 @@ launchSettings.json
 *.swp
 *.swo
 *~
+
+/.superpowers/

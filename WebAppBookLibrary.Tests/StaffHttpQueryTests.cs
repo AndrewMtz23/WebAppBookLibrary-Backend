@@ -69,7 +69,7 @@ public sealed class StaffHttpQueryTests
         var store = new Mock<ILoanStore>();
         store.Setup(x => x.FindActiveUserAsync("staff")).ReturnsAsync(new WebAppBookLibrary.Models.User { Id = "000000000000000000000001", Username = "staff", IsActive = true });
         NormalizedLoanQuery? received = null;
-        store.Setup(x => x.SearchAsync(It.IsAny<NormalizedLoanQuery>(), It.IsAny<CancellationToken>())).ReturnsAsync((NormalizedLoanQuery q, CancellationToken _) => { received = q; return new([], q.Page, q.PageSize, 0); });
+        store.Setup(x => x.SearchDetailsAsync(It.IsAny<NormalizedLoanQuery>(), It.IsAny<CancellationToken>())).ReturnsAsync((NormalizedLoanQuery q, CancellationToken _) => { received = q; return new PagedResult<LoanSearchEntry>([], q.Page, q.PageSize, 0); });
         await using var app = await StartApp(services => services.AddTransient(_ => new LoansController(new LoanService(store.Object))), RoleNames.User);
         using var client = Client(app);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/loans/my?userId=000000000000000000000099&query=ana")).StatusCode);

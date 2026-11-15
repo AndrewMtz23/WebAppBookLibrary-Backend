@@ -230,6 +230,13 @@ public static class Program
             options.UseInMemoryDatabase("LogDb"));
 
         services.AddSingleton<MongoDBService>();
+        services.AddScoped<WebAppBookLibrary.Services.Branches.BranchStore>();
+        services.AddScoped<WebAppBookLibrary.Services.Branches.BranchAccessService>();
+        services.AddScoped<WebAppBookLibrary.Services.Branches.BranchCatalogStore>();
+        services.AddScoped<WebAppBookLibrary.Services.Books.BookChangeService>();
+        services.AddHttpContextAccessor();
+        services.AddScoped(provider => WebAppBookLibrary.Services.Branches.BranchRequestContext.From(provider.GetRequiredService<IHttpContextAccessor>().HttpContext));
+        services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(o => o.Filters.Add<WebAppBookLibrary.Services.Branches.BranchApiFilter>());
         services.AddScoped<IUserStore, MongoUserStore>();
         services.AddScoped<ILoanStore, MongoLoanStore>();
         services.AddScoped<UserService>();

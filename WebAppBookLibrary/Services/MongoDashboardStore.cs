@@ -2,11 +2,14 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using WebAppBookLibrary.Contracts.Dashboard;
 using WebAppBookLibrary.Models;
+using WebAppBookLibrary.Services.Branches;
 
 namespace WebAppBookLibrary.Services;
 
-public sealed class MongoDashboardStore(MongoDBService database) : IDashboardStore
+public sealed class MongoDashboardStore(MongoDBService database, BranchRequestContext? context = null) : IDashboardStore
 {
+    private string? _branch;
+    private string[]? _catalogIds;
     private readonly IMongoCollection<User> _users = database.Users;
     private readonly IMongoCollection<Book> _books = database.Books;
     private readonly IMongoCollection<Loan> _loans = database.Loans;
@@ -31,6 +34,8 @@ public sealed class MongoDashboardStore(MongoDBService database) : IDashboardSto
 
     public async Task<LibrarianDashboardResponse> LibrarianAsync(DashboardPeriod period, CancellationToken token)
     {
+        _branch = await BranchRequestContext.ResolveAsync(database, context, token);
+        if (_branch is not null) _catalogIds = (await database._database.GetCollection<BranchCatalogEntry>("BranchCatalog").Find(e => e.BranchId == _branch && e.IsActive).Project(e => e.BookId).ToListAsync(token)).ToArray();
         var periodCounts = await ReservationPeriodCounts(period, token);
         var previousCounts = await ReservationPeriodCounts(period with { FromUtc = period.PreviousFromUtc, ToUtc = period.PreviousToUtc }, token);
         var currentPhysical = await CountLoans(new BsonDocument
@@ -119,7 +124,7 @@ public sealed class MongoDashboardStore(MongoDBService database) : IDashboardSto
 
     private async Task<IReadOnlyList<DashboardRankItem>> TopReserved(DashboardPeriod period, CancellationToken token)
     {
-        var stages = EffectiveLoanStages(period.GeneratedAt).Concat([
+        var stages = ScopedLoanStages(period.GeneratedAt).Concat([
             new BsonDocument("$match", Range("_reservedAt", period.FromUtc, period.ToUtc)),
             new BsonDocument("$group", new BsonDocument { { "_id", "$BookId" }, { "count", new BsonDocument("$sum", 1) } }),
             BookLookup(), new BsonDocument("$unwind", "$_book"),
@@ -134,7 +139,7 @@ public sealed class MongoDashboardStore(MongoDBService database) : IDashboardSto
 
     private async Task<IReadOnlyList<DashboardRankItem>> WithoutReservations(DashboardPeriod period, CancellationToken token)
     {
-        var lookupPipeline = new BsonArray(EffectiveLoanStages(period.GeneratedAt).Concat([
+        var lookupPipeline = new BsonArray(ScopedLoanStages(period.GeneratedAt).Concat([
             new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$and", new BsonArray
             {
                 new BsonDocument("$eq", new BsonArray { "$BookId", "$$bookId" }),
@@ -156,6 +161,13 @@ public sealed class MongoDashboardStore(MongoDBService database) : IDashboardSto
 
     private async Task<(long Available, long Low, long Out)> InventorySummary(CancellationToken token)
     {
+        if (_branch is not null)
+        {
+            var books = await _books.Find(ActiveBookFilter() & Builders<Book>.Filter.Eq(b => b.MediaType, "physical")).ToListAsync(token);
+            var units = await database._database.GetCollection<BookCopy>("BookCopies").Find(c => c.BranchId == _branch && c.Status == "available" && !c.InspectionPending && (c.Condition == "good" || c.Condition == "worn") && c.ActiveAssignmentId == null).ToListAsync(token);
+            var values = books.Select(b => b.InventoryMode == "unit" ? units.Count(c => c.BookId == b.Id) : b.InventoryBranchId == _branch ? b.AvailableCopies ?? 0 : 0).ToArray();
+            return (values.Sum(), values.Count(v => v == 1), values.Count(v => v == 0));
+        }
         var rows = await _books.Aggregate<BsonDocument>(InventoryStages().Concat([
             new BsonDocument("$group", new BsonDocument
             {
@@ -205,7 +217,9 @@ public sealed class MongoDashboardStore(MongoDBService database) : IDashboardSto
     }
 
     private async Task<List<BsonDocument>> LoanAggregate(IEnumerable<BsonDocument> stages, CancellationToken token, DateTime now) =>
-        await _loans.Aggregate<BsonDocument>(EffectiveLoanStages(now).Concat(stages).ToArray()).ToListAsync(token);
+        await _loans.Aggregate<BsonDocument>(ScopedLoanStages(now).Concat(stages).ToArray()).ToListAsync(token);
+
+    private IEnumerable<BsonDocument> ScopedLoanStages(DateTime now) => _branch is null ? EffectiveLoanStages(now) : new[] { new BsonDocument("$match", new BsonDocument("$or", new BsonArray { new BsonDocument("BranchId", _branch), new BsonDocument("MediaType", "digital") })) }.Concat(EffectiveLoanStages(now));
 
     private static IEnumerable<BsonDocument> EffectiveLoanStages(DateTime now) =>
     [
@@ -260,7 +274,7 @@ public sealed class MongoDashboardStore(MongoDBService database) : IDashboardSto
         { "regex", "^\\s*$" }
     });
 
-    private static IEnumerable<BsonDocument> InventoryStages() =>
+    private IEnumerable<BsonDocument> InventoryStages() =>
     [
         new("$match", ActiveBookDocument()),
         new("$set", new BsonDocument
@@ -277,8 +291,12 @@ public sealed class MongoDashboardStore(MongoDBService database) : IDashboardSto
         { "pipeline", new BsonArray { new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$eq", new BsonArray { new BsonDocument("$toString", "$_id"), "$$bookId" }))) } }, { "as", "_book" }
     });
 
-    private static FilterDefinition<Book> ActiveBookFilter() => Builders<Book>.Filter.Or(Builders<Book>.Filter.Eq(book => book.IsActive, true), Builders<Book>.Filter.Exists(book => book.IsActive, false));
-    private static BsonDocument ActiveBookDocument() => new("$or", new BsonArray { new BsonDocument("IsActive", true), new BsonDocument("IsActive", new BsonDocument("$exists", false)) });
+    private FilterDefinition<Book> ActiveBookFilter() => ActiveBookDocument();
+    private BsonDocument ActiveBookDocument()
+    {
+        var active = new BsonDocument("$or", new BsonArray { new BsonDocument("IsActive", true), new BsonDocument("IsActive", new BsonDocument("$exists", false)) });
+        return _catalogIds is null ? active : And(active, new BsonDocument("_id", new BsonDocument("$in", new BsonArray(_catalogIds.Select(ObjectId.Parse)))));
+    }
     private static BsonValue EffectiveMediaExpression() => new BsonDocument("$cond", new BsonArray { BlankStringExpression("$MediaType"), "physical", "$MediaType" });
     private static BsonValue EffectiveAvailableExpression() => new BsonDocument("$ifNull", new BsonArray
     {

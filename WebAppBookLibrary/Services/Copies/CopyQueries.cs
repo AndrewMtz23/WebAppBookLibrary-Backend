@@ -6,14 +6,23 @@ using WebAppBookLibrary.Domain.Copies;
 
 namespace WebAppBookLibrary.Services.Copies;
 
-public sealed class CopyQueries(MongoDBService mongo)
+public sealed class CopyQueries(MongoDBService mongo, Branches.BranchRequestContext? branchContext=null)
 {
     private IMongoCollection<BookCopy> Copies=>mongo._database.GetCollection<BookCopy>("BookCopies");
+    public async Task<CopyOriginResponse?> ResolveOriginAsync(string id, string actorId, CancellationToken ct)
+    {
+        if (!ObjectId.TryParse(id, out _)) return null;
+        var copy = await Copies.Find(c => c.Id == id).FirstOrDefaultAsync(ct);
+        if (copy?.BranchId is null) return null;
+        var access = await new Branches.BranchAccessService(mongo).ResolveAsync(actorId, copy.BranchId, ct);
+        return access is null ? null : new(copy.BranchId, access.Branch.Name);
+    }
     public async Task<CopyResponse?> GetAsync(string id,CancellationToken ct)
     {
         if(!ObjectId.TryParse(id,out _)) return null;
+        var branch = await Branches.BranchRequestContext.ResolveAsync(mongo,branchContext,ct);
         var copy=await Copies.Find(c=>c.Id==id).FirstOrDefaultAsync(ct);
-        if(copy is null)return null;
+        if(copy is null || (branch is not null && copy.BranchId != branch))return null;
         var response=CopyResponse.From(copy);
         if(copy.ActiveAssignmentType=="pickup"&&copy.ActiveAssignmentId is not null)
         {
@@ -25,14 +34,17 @@ public sealed class CopyQueries(MongoDBService mongo)
     }
     public async Task<CopyResponse?> LookupAsync(string code,CancellationToken ct)
     {
+        var branch = await Branches.BranchRequestContext.ResolveAsync(mongo,branchContext,ct);
         var normalized=CopyRules.NormalizeCode(code);
         var copy=await Copies.Find(c=>c.InventoryCode==normalized).FirstOrDefaultAsync(ct);
-        return copy is null?null:CopyResponse.From(copy);
+        return copy is null || (branch is not null && copy.BranchId != branch)?null:CopyResponse.From(copy);
     }
     public async Task<CopyPage> ListAsync(string bookId,string? status,int page,int pageSize,CancellationToken ct)
     {
         ValidatePage(page,pageSize);
+        var branch = await Branches.BranchRequestContext.ResolveAsync(mongo,branchContext,ct);
         var filter=Builders<BookCopy>.Filter.Eq(c=>c.BookId,bookId);
+        if(branch is not null) filter &= Builders<BookCopy>.Filter.Eq(c=>c.BranchId,branch);
         var grouped=await Copies.Aggregate().Match(filter).Group(c=>c.Status,g=>new {Status=g.Key,Count=g.Count()}).ToListAsync(ct);
         var states=grouped.ToDictionary(g=>g.Status,g=>g.Count);
         if(!string.IsNullOrEmpty(status)) filter &= Builders<BookCopy>.Filter.Eq(c=>c.Status,status);
@@ -43,6 +55,7 @@ public sealed class CopyQueries(MongoDBService mongo)
     public async Task<CopyHistoryPage> HistoryAsync(string id,int page,int pageSize,CancellationToken ct)
     {
         ValidatePage(page,pageSize);
+        if(await GetAsync(id,ct) is null) return new([],0,page,pageSize);
         var history=mongo._database.GetCollection<CopyHistoryEntry>("CopyHistory");
         var filter=Builders<CopyHistoryEntry>.Filter.Eq(h=>h.CopyId,id);
         var count=await history.CountDocumentsAsync(filter,cancellationToken:ct);

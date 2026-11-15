@@ -1,6 +1,10 @@
+using System.Security.Claims;
+using WebAppBookLibrary.Services.Branches;
+using WebAppBookLibrary.Services.Books;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using WebAppBookLibrary.Contracts.Books;
 using WebAppBookLibrary.Errors;
 using WebAppBookLibrary.Models;
@@ -17,9 +21,14 @@ public class BooksController : ControllerBase
     private readonly BookService _bookService;
     private readonly Logservice _logService;
 
-    public BooksController(BookService bookService, Logservice logService)
+    private readonly MongoDBService? _mongo;
+    private readonly BookChangeService? _changes;
+    private readonly BranchRequestContext? _context;
+
+    public BooksController(BookService bookService, Logservice logService, MongoDBService? mongo = null, BookChangeService? changes = null, BranchRequestContext? context = null)
     {
         _bookService = bookService;
+        _mongo = mongo; _changes = changes; _context = context;
         _logService = logService;
     }
 
@@ -64,6 +73,14 @@ public class BooksController : ControllerBase
     {
         if (!ObjectId.TryParse(id, out _)) return ApiProblemFactory.Result(400, "Invalid book identifier");
         var book = await _bookService.GetManagementAsync(id, cancellationToken);
+        if (book is not null && _mongo is not null && await BranchRequestContext.EnabledAsync(_mongo._database, cancellationToken))
+        {
+            var branch = await BranchRequestContext.ResolveAsync(_mongo, _context, cancellationToken);
+            var catalog = _mongo._database.GetCollection<BranchCatalogEntry>("BranchCatalog");
+            var entry = await catalog.Find(e => e.BranchId == branch && e.BookId == id).FirstOrDefaultAsync(cancellationToken);
+            book = book with { CatalogVersion = entry?.Version, CatalogActive = entry?.IsActive,
+                RequiresApproval = !User.IsInRole("admin") && await catalog.CountDocumentsAsync(e => e.BookId == id, cancellationToken: cancellationToken) > 1 };
+        }
         return book is null ? ApiProblemFactory.Result(404, "Book not found") : Ok(book);
     }
 
@@ -86,6 +103,12 @@ public class BooksController : ControllerBase
     [Authorize(Policy = PolicyNames.ManageBooks)]
     public async Task<IActionResult> Create([FromBody] BookWriteRequest request, CancellationToken cancellationToken)
     {
+        if (_mongo is not null && await BranchRequestContext.EnabledAsync(_mongo._database, cancellationToken))
+        {
+            var branch = await BranchRequestContext.ResolveAsync(_mongo, _context, cancellationToken);
+            var created = await _changes!.CreateAsync(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "", branch!, request, cancellationToken);
+            return created.Success ? Ok(WebAppBookLibrary.Domain.Books.BookMapper.ToDetail(created.Value!, 0, false)) : BookProblem(created.ErrorCode == "branch_forbidden" ? 403 : 409, "No se pudo crear el libro", created.ErrorCode!);
+        }
         var result = await _bookService.CreateAsync(request, ObjectId.GenerateNewId().ToString(), DateTime.UtcNow, cancellationToken);
         if (!result.Success)
         {
@@ -104,6 +127,12 @@ public class BooksController : ControllerBase
         if (!ObjectId.TryParse(id, out _))
             return ApiProblemFactory.Result(400, "Invalid book identifier");
 
+        if (_mongo is not null && await BranchRequestContext.EnabledAsync(_mongo._database, cancellationToken))
+        {
+            var branch = await BranchRequestContext.ResolveAsync(_mongo, _context, cancellationToken);
+            var edited = await _changes!.EditAsync(User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "", branch!, id, request, request.ExpectedMetadataVersion ?? 0, cancellationToken);
+            return edited.Success ? Ok(WebAppBookLibrary.Domain.Books.BookMapper.ToDetail(edited.Value!, 0, false)) : BookProblem(edited.ErrorCode == "branch_forbidden" ? 403 : 409, "No se pudo modificar el libro", edited.ErrorCode!);
+        }
         var result = await _bookService.UpdateAsync(id, request, DateTime.UtcNow, cancellationToken);
         var response = result.ErrorCode switch
         {
@@ -143,6 +172,13 @@ public class BooksController : ControllerBase
         if (!ObjectId.TryParse(id, out _))
             return ApiProblemFactory.Result(400, "Invalid book identifier");
 
+        if (_mongo is not null && await BranchRequestContext.EnabledAsync(_mongo._database, cancellationToken))
+        {
+            var branch = await BranchRequestContext.ResolveAsync(_mongo, _context, cancellationToken);
+            if (request.ExpectedCatalogVersion is null) return BookProblem(409, "Se requiere la versión del catálogo", "catalog_version_required");
+            var changed = await new BranchCatalogStore(_mongo, TimeProvider.System).SetAsync(_context?.ActorId ?? "", branch!, id, request.IsActive, request.ExpectedCatalogVersion.Value, cancellationToken);
+            return changed.Success ? Ok(changed.Value) : BookProblem(changed.ErrorCode == "branch_forbidden" ? 403 : 409, "No se pudo actualizar el catálogo", changed.ErrorCode!);
+        }
         var result = await _bookService.SetActiveAsync(id, request.IsActive, DateTime.UtcNow, cancellationToken);
         if (!result.Success)
         {

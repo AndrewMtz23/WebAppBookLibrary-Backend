@@ -130,6 +130,10 @@ public sealed class MongoAdminUserStore : IAdminUserStore
                     await Support.SupportRetention.DeleteOwnedAsync(_users.Database, transaction, canonicalTargetId, transactionToken);
                     await Support.SupportRetention.AnonymizeStaffAsync(_users.Database, transaction, canonicalTargetId, transactionToken);
                     await Copies.CopyRetention.AnonymizeActorAsync(_users.Database, transaction, canonicalTargetId, transactionToken);
+                    await _users.Database.GetCollection<BranchStaffAssignment>("BranchStaffAssignments").DeleteManyAsync(transaction, a => a.UserId == canonicalTargetId, cancellationToken: transactionToken);
+                    await _users.Database.GetCollection<BookChangeRequest>("BookChangeRequests").UpdateManyAsync(transaction, r => r.RequestedBy == canonicalTargetId, Builders<BookChangeRequest>.Update.Set(r => r.RequestedBy, ""), cancellationToken: transactionToken);
+                    await _users.Database.GetCollection<BookChangeRequest>("BookChangeRequests").UpdateManyAsync(transaction, r => r.DecidedBy == canonicalTargetId, Builders<BookChangeRequest>.Update.Set(r => r.DecidedBy, null), cancellationToken: transactionToken);
+                    await _users.Database.GetCollection<BookMetadataHistoryEntry>("BookMetadataHistory").UpdateManyAsync(transaction, h => h.ActorId == canonicalTargetId, Builders<BookMetadataHistoryEntry>.Update.Set(h => h.ActorId, null), cancellationToken: transactionToken);
                     await _users.Database.GetCollection<Favorite>("Favorites").DeleteManyAsync(transaction,
                         favorite => favorite.UserId == canonicalTargetId, cancellationToken: transactionToken);
                     await _users.Database.GetCollection<ReadingEntry>("ReadingEntries").DeleteManyAsync(transaction,
